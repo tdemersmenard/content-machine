@@ -16,7 +16,7 @@ Pour chaque variante :
 - `beats` : pour chaque beat du squelette, avec son `beat_index` à partir de 0 :
   - `pain` : la douleur de l'avatar qui sert ce moment.
   - `belief` : la croyance en jeu, ou une chaîne vide.
-  - `proof` : la preuve à utiliser. Elle doit venir du profil, en particulier de ce que le créateur a vraiment vécu. S'il n'y en a pas, écris « [À VÉRIFIER] » suivi de ce qu'il faudrait.
+  - `proof` : la preuve à utiliser. Elle doit venir du profil, en particulier de `creator_facts`, ce que le créateur a vraiment vécu. S'il n'y en a pas, écris « [À VÉRIFIER] » suivi de ce qu'il faudrait.
   - `example` : l'exemple concret, tiré du profil, ou une chaîne vide.
 
 N'invente aucun fait sur le créateur ni aucun chiffre. Un sujet marqué `inferred` est une hypothèse : préfère les sujets `stated`.

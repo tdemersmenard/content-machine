@@ -48,6 +48,10 @@ def render_avatar(name: str, profile: NicheProfile) -> str:
         "",
         f"**Objectif :** {GOALS[i.goal]}. {i.goal_details}".rstrip(),
         "",
+        "**Faits vécus confirmés**",
+        "",
+        *_bullets(profile.creator_facts),
+        "",
     ]
 
     v = profile.voice

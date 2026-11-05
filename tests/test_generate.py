@@ -333,6 +333,23 @@ def test_invented_numbers_are_flagged_in_the_stored_script(db: Session, niche, s
     assert set(content.to_verify) == {"7", "45 000", "9999", "800"}
 
 
+def test_creator_facts_reach_the_writer_and_trust_their_numbers(db: Session, niche, source) -> None:
+    video_id, ids = source
+    profile = load_profile(niche)
+    profile.creator_facts = ["Avait 17 ans au début"]
+    set_profile(niche, profile)
+    db.commit()
+    fake = FakeScriptClaude(drafts=[script_draft(ids, ending="À 17 ans j'ai parti ça")])
+
+    (script,) = adapt(db, video_id, niche.id, fake, n_variantes=1).scripts
+
+    brief = json.loads(
+        next(c for c in fake.calls if c["prompt"] == "script_write")["variables"]["brief"]
+    )
+    assert brief["profile"]["creator_facts"] == ["Avait 17 ans au début"]
+    assert load_content(script).to_verify == []
+
+
 def test_number_from_the_profile_is_trusted(db: Session, niche, source) -> None:
     video_id, ids = source
     profile = load_profile(niche)

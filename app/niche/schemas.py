@@ -109,6 +109,8 @@ class VoiceProfile(BaseModel):
 
 
 class NicheProfile(ProfileDraft):
+    # Faits vécus confirmés par le créateur : la seule matière pour parler en son nom.
+    creator_facts: list[str] = []
     voice_profile: VoiceProfile | None = None
 
 

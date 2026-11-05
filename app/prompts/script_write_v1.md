@@ -31,7 +31,8 @@ Vise `target_duration_s` au débit `words_per_second` : le nombre total de mots 
 
 ## Ce qui est interdit
 
-- Inventer un fait sur le créateur : anecdote, client, résultat, montant, expérience. Il dit ces phrases en son nom à sa propre audience. Utilise ce que le profil dit qu'il a vécu. S'il faut autre chose, écris « [À VÉRIFIER : ce qu'il faudrait] » à la place.
+- Inventer un fait sur le créateur : anecdote, client, résultat, montant, expérience. Il dit ces phrases en son nom à sa propre audience. Utilise `creator_facts` et ce que le profil dit qu'il a vécu. S'il faut autre chose, écris « [À VÉRIFIER : ce qu'il faudrait] » à la place.
+- Enseigner une méthode qui contredit `creator_facts`. Si le créateur a obtenu ses résultats d'une certaine façon, c'est cette façon que le script montre, pas une autre qui te paraît plus simple.
 - Inventer un chiffre ou une statistique. Écris en chiffres tout ce qui mesure quelque chose (montant, durée, pourcentage, quantité), jamais en lettres : un chiffre absent du profil sera marqué automatiquement. Les petits mots du langage courant (« une affaire », « deux choses ») restent naturels.
 - Présenter comme un fait, y compris dans `angle` et `internal_title`, quelque chose que le profil ne dit pas. Si la thèse repose sur un fait à confirmer, dis-le avec un [À VÉRIFIER : ...] dès la première mention.
 - Reprendre plus de 5 mots consécutifs de la vidéo source ou des exemples.

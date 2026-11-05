@@ -205,10 +205,12 @@ Validé en conditions réelles, sur une seule vidéo (TikTok français de 122 s,
 Validé en conditions réelles pour la génération, sur la vraie niche 1 :
 - `cm adapt 1 --niche 1 -n 1` : 1,34 $, 7 min 20. `cm ideas --niche 1 -n 5 --develop 1` : environ
   1 $, 5 min 30. Une adaptation à 3 variantes (le défaut) reviendra à environ 3,50 $ et 15 à 20 min.
-- Le hook plafonne à 7/10 sur les deux scripts après 2 réécritures. Le critique réclame surtout le
-  « comment » : le profil ne contient pas l'histoire réelle du créateur (premier client, façon de
-  trouver des clients). C'est le principal levier de qualité.
-- `script_1` date d'avant la correction du marquage des chiffres, il en a trop.
+- Le hook plafonne à 7/10 sur les trois scripts après 2 réécritures. Le critique réclame surtout le
+  « comment » : `creator_facts` est le principal levier de qualité. Il manque encore la plateforme,
+  le ciblage et le message des pubs, le budget de départ et l'histoire du premier client.
+- `script_3` est le premier écrit avec `creator_facts`. `script_1` et `script_2` sont périmés : ils
+  enseignent une méthode (porte-à-porte, voisins) qui n'est pas celle du créateur.
+- `creator_facts` n'est pas demandé par l'entrevue : il se remplit par `PATCH /niches/{id}`.
 
 Validé en conditions réelles pour la niche, avec un créateur fictif sur une base temporaire :
 - Entrevue, profil et banque de sujets en québécois. La voix sur la transcription de keo_fdb.

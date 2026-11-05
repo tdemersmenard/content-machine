@@ -245,6 +245,24 @@ def test_invalid_edit_changes_nothing(db: Session) -> None:
     assert load_profile(niche).identity.goal == "leads"
 
 
+def test_creator_facts_are_editable_and_shown_on_the_sheet(db: Session) -> None:
+    niche = make_niche(db)
+    assert load_profile(niche).creator_facts == []
+
+    update_niche(db, niche, {"creator_facts": ["A trouvé ses clients grâce aux pubs"]})
+
+    assert load_profile(niche).creator_facts == ["A trouvé ses clients grâce aux pubs"]
+    assert "- A trouvé ses clients grâce aux pubs" in niche.avatar_markdown
+
+
+def test_profile_stored_before_creator_facts_still_loads(db: Session) -> None:
+    niche = make_niche(db)
+    niche.profile = {k: v for k, v in niche.profile.items() if k != "creator_facts"}
+    db.commit()
+
+    assert load_profile(niche).creator_facts == []
+
+
 def test_every_change_creates_a_version_with_the_full_state(db: Session) -> None:
     niche = make_niche(db)
     start = niche.version
