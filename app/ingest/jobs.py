@@ -28,6 +28,7 @@ from app.ingest.schemas import (
     VideoOut,
 )
 from app.llm.errors import ClaudeError
+from app.niche.voice import refresh_voice_for_video
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +130,9 @@ def run_job(job_id: int, deps: IngestDeps | None = None) -> None:
         if not _claim(session, job_id):
             return
         job = session.get(IngestJob, job_id)
+        deps = deps or IngestDeps()
         try:
-            process_job(session, job, deps or IngestDeps())
+            process_job(session, job, deps)
         except Exception as exc:
             if isinstance(exc, EXPECTED_ERRORS):
                 logger.info("Job d'ingestion %d en échec : %s", job_id, exc)
@@ -142,6 +144,8 @@ def run_job(job_id: int, deps: IngestDeps | None = None) -> None:
             job.error = f"{type(exc).__name__}: {exc}"
             job.finished_at = utcnow()
             session.commit()
+        else:
+            refresh_voice_for_video(session, job.video_id, deps.claude)
 
 
 def requeue_stale_jobs(session: Session) -> int:

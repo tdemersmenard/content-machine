@@ -22,6 +22,7 @@ from app.analysis.schemas import (
     VerifiedAnalysis,
     ViralAnalysis,
 )
+from app.niche.schemas import InterviewTurn, ProfileDraft, TopicBatch, VoiceTraits
 from app.patterns.schemas import ExtractedPatterns, MergeDecision
 from tests.analysis_helpers import sample_analysis
 
@@ -83,7 +84,17 @@ def test_schema_matches_snapshot() -> None:
 
 
 @pytest.mark.parametrize(
-    "model", [DraftAnalysis, VerifiedAnalysis, ExtractedPatterns, MergeDecision]
+    "model",
+    [
+        DraftAnalysis,
+        VerifiedAnalysis,
+        ExtractedPatterns,
+        MergeDecision,
+        InterviewTurn,
+        ProfileDraft,
+        TopicBatch,
+        VoiceTraits,
+    ],
 )
 def test_schema_stays_under_the_api_limits(model: type[BaseModel]) -> None:
     """L'API refuse plus de 24 paramètres optionnels et 16 unions."""

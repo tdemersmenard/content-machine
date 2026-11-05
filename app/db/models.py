@@ -46,6 +46,11 @@ class SourceType(StrEnum):
     URL = "url"
 
 
+class InterviewStatus(StrEnum):
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+
+
 class PatternType(StrEnum):
     HOOK = "hook"
     ANGLE = "angle"
@@ -233,7 +238,47 @@ class Niche(Base):
     banned_words: Mapped[list[str]] = mapped_column(JSON, default=list)
     examples: Mapped[list[Any]] = mapped_column(JSON, default=list)
     constraints: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Source de vérité. audience, offer, tone, banned_words et constraints en sont dérivés.
+    profile: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    avatar_markdown: Mapped[str | None] = mapped_column(Text)
+    topics: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, server_default="[]")
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class NicheVersion(Base):
+    """Instantané complet d'une niche, créé à chaque changement."""
+
+    __tablename__ = "niche_versions"
+    __table_args__ = (
+        UniqueConstraint("niche_id", "version", name="uq_niche_versions_niche_id_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    niche_id: Mapped[int] = mapped_column(ForeignKey("niches.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(255))
+    profile: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    topics: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    change_note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class NicheInterview(Base):
+    """Entrevue d'onboarding, gardée en base pour pouvoir la reprendre."""
+
+    __tablename__ = "niche_interviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[InterviewStatus] = mapped_column(
+        _enum(InterviewStatus, "interview_status"), default=InterviewStatus.IN_PROGRESS
+    )
+    transcript: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    covered: Mapped[list[str]] = mapped_column(JSON, default=list)
+    niche_id: Mapped[int | None] = mapped_column(ForeignKey("niches.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class Script(Base):

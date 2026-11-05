@@ -6,14 +6,33 @@ from typing import Annotated
 
 import anthropic
 import typer
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.analysis.service import AnalysisError, analyze, pending_video_ids, report_path
-from app.db.models import IngestJob, JobStatus, Pattern, PatternType, Video
+from app.db.models import (
+    IngestJob,
+    JobStatus,
+    Niche,
+    NicheInterview,
+    Pattern,
+    PatternType,
+    Video,
+)
 from app.db.session import get_session_factory
 from app.ingest.jobs import Submission, Worker, canonical, drain, latest_job, run_job, submit
 from app.ingest.pipeline import IngestDeps, IngestError
 from app.llm.client import ClaudeClient, get_claude
 from app.llm.errors import ClaudeError
+from app.niche.interview import (
+    InterviewError,
+    answer_interview,
+    current_question,
+    finish_interview,
+    start_interview,
+)
+from app.niche.topics import refresh_topics
+from app.niche.voice import refresh_voice
 from app.patterns.search import score_mean, to_detail, top_patterns
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
@@ -21,9 +40,11 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 cli = typer.Typer(help="ContentMachine", no_args_is_help=True)
 patterns_cli = typer.Typer(help="Bibliothèque de patterns.", no_args_is_help=True)
 cli.add_typer(patterns_cli, name="patterns")
+niche_cli = typer.Typer(help="Profils de niche.", no_args_is_help=True)
+cli.add_typer(niche_cli, name="niche")
 
 Own = Annotated[bool, typer.Option("--own", help="C'est une de mes vidéos.")]
-Niche = Annotated[str | None, typer.Option("--niche", help="Niche d'origine de la vidéo.")]
+NicheOption = Annotated[str | None, typer.Option("--niche", help="Niche d'origine de la vidéo.")]
 NoWait = Annotated[bool, typer.Option("--no-wait", help="Met en file sans traiter.")]
 
 
@@ -67,7 +88,7 @@ def _submit(source: str, own: bool, niche: str | None) -> Submission:
 def ingest_command(
     source: Annotated[str, typer.Argument(help="Fichier vidéo ou URL.")],
     own: Own = False,
-    niche: Niche = None,
+    niche: NicheOption = None,
     no_wait: NoWait = False,
 ) -> None:
     """Ingère une vidéo."""
@@ -82,7 +103,7 @@ def ingest_command(
 def ingest_folder_command(
     folder: Annotated[Path, typer.Argument(exists=True, file_okay=False, help="Dossier.")],
     own: Own = False,
-    niche: Niche = None,
+    niche: NicheOption = None,
     no_wait: NoWait = False,
 ) -> None:
     """Ingère toutes les vidéos d'un dossier (sans ses sous-dossiers)."""
@@ -186,6 +207,119 @@ def patterns_show_command(pattern_id: int) -> None:
         typer.echo(
             f"- Vidéo {example['video_id']} à {example['timestamp']} s : {example['excerpt']}"
         )
+
+
+def _load_niche(session: Session, niche_id: int) -> Niche:
+    niche = session.get(Niche, niche_id)
+    if niche is None or niche.profile is None:
+        typer.echo("Niche inconnue ou sans profil.", err=True)
+        raise typer.Exit(1)
+    return niche
+
+
+def _claude_failure(exc: Exception) -> typer.Exit:
+    typer.echo(f"Échec de l'appel à Claude : {exc}", err=True)
+    return typer.Exit(1)
+
+
+@niche_cli.command("new")
+def niche_new_command(
+    name: Annotated[str | None, typer.Option("--name", help="Nom de la niche.")] = None,
+    resume: Annotated[int | None, typer.Option("--resume", help="Id de l'entrevue.")] = None,
+) -> None:
+    """Crée une niche par entrevue. Tape /fin pour terminer avant la fin."""
+    claude = default_claude()
+    with get_session_factory()() as session:
+        try:
+            if resume is None:
+                interview = start_interview(session, claude, name)
+            else:
+                interview = session.get(NicheInterview, resume)
+                if interview is None:
+                    typer.echo("Entrevue inconnue.", err=True)
+                    raise typer.Exit(1)
+            typer.echo(
+                f"Entrevue {interview.id}. Pour la reprendre : cm niche new --resume {interview.id}"
+            )
+
+            while (question := current_question(interview)) is not None:
+                typer.echo(f"\n{question}")
+                answer = typer.prompt(">", prompt_suffix=" ")
+                if answer.strip() == "/fin":
+                    finish_interview(session, interview, claude)
+                    break
+                try:
+                    answer_interview(session, interview, answer, claude)
+                except InterviewError as exc:
+                    typer.echo(str(exc), err=True)
+        except (ClaudeError, anthropic.APIError) as exc:
+            raise _claude_failure(exc) from exc
+
+        niche = session.get(Niche, interview.niche_id)
+        active = sum(1 for item in niche.topics if item["status"] == "new")
+        typer.echo(f"\nNiche {niche.id} créée : {niche.name}. {active} sujet(s) en banque.")
+        if not active:
+            typer.echo(f"Banque de sujets vide : relance cm niche topics {niche.id}.", err=True)
+
+
+@niche_cli.command("list")
+def niche_list_command() -> None:
+    """Liste les niches."""
+    with get_session_factory()() as session:
+        niches = session.scalars(select(Niche).order_by(Niche.id)).all()
+        if not niches:
+            typer.echo("Aucune niche.")
+        for item in niches:
+            typer.echo(f"#{item.id} {item.name} (version {item.version})")
+
+
+@niche_cli.command("show")
+def niche_show_command(niche_id: int) -> None:
+    """Affiche la fiche avatar."""
+    with get_session_factory()() as session:
+        typer.echo(_load_niche(session, niche_id).avatar_markdown)
+
+
+@niche_cli.command("topics")
+def niche_topics_command(
+    niche_id: int,
+    refresh: Annotated[bool, typer.Option("--refresh", help="Complète la banque.")] = False,
+    limit: Annotated[int, typer.Option("--limit", help="Nombre à afficher.")] = 50,
+) -> None:
+    """Affiche la banque de sujets, du plus intense au moins intense."""
+    with get_session_factory()() as session:
+        niche = _load_niche(session, niche_id)
+        if refresh or not niche.topics:
+            try:
+                refresh_topics(session, niche, default_claude())
+            except (ClaudeError, anthropic.APIError) as exc:
+                raise _claude_failure(exc) from exc
+        active = [item for item in niche.topics if item["status"] == "new"]
+        for item in active[:limit]:
+            hypothesis = " (hypothèse)" if item["grounding"] == "inferred" else ""
+            typer.echo(f"{item['intensity']:>2}/10 [{item['id']}] {item['title']}{hypothesis}")
+
+
+@niche_cli.command("voice")
+def niche_voice_command(
+    niche_id: int,
+    force: Annotated[bool, typer.Option("--force", help="Recalcule même sans changement.")] = False,
+) -> None:
+    """Met à jour ma voix depuis mes propres vidéos."""
+    with get_session_factory()() as session:
+        niche = _load_niche(session, niche_id)
+        try:
+            voice = refresh_voice(session, niche, default_claude(), force)
+        except (ClaudeError, anthropic.APIError) as exc:
+            raise _claude_failure(exc) from exc
+        if voice is None:
+            typer.echo("Aucune de mes vidéos avec de la parole : utilise cm ingest --own.")
+            return
+        typer.echo(
+            f"{len(voice.video_ids)} vidéo(s), {voice.words_per_second:.1f} mots/s, "
+            f"{voice.avg_sentence_words:.1f} mots par phrase."
+        )
+        typer.echo(voice.style_summary)
 
 
 @cli.command("status")

@@ -75,6 +75,15 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
   valable est ignoré. `score_alpha` et `score_beta` ne sont modifiés que par la boucle d'apprentissage.
 - **Embeddings :** un vecteur n'est comparable qu'à ceux du même `embedding_model`. Changer de
   modèle impose de recalculer toute la bibliothèque.
+- **Profil de niche :** `niches.profile` fait foi. La fiche avatar et les colonnes `audience`, `offer`,
+  `tone`, `banned_words` et `constraints` en sont dérivées par `set_profile`, jamais écrites à la main.
+  Tout changement passe par `snapshot` pour créer une version.
+- **Sujets :** `grounding` distingue ce que le profil dit (`stated`) d'une hypothèse (`inferred`). Le
+  générateur doit traiter une hypothèse comme telle.
+- **Voix :** seules les vidéos `is_own_content` comptent. Un tic ou une expression absent mot pour
+  mot des transcriptions est écarté.
+- **Noms de champs Pydantic :** éviter ceux de `BaseModel`, comme `register`. Ils deviennent
+  silencieusement optionnels.
 - **Timeline :** `timeline.json` est le contrat avec le module d'analyse. Incrémenter
   `TIMELINE_VERSION` à chaque changement de format.
 
@@ -95,6 +104,11 @@ uv run cm analyze <id> [--force]                       # Analyser une vidéo ing
 uv run cm analyze --all-pending                        # Analyser tout ce qui est en attente
 uv run cm patterns list [--type hook] [--niche-id 1]   # Lister les patterns par score
 uv run cm patterns show <id>                           # Détail d'un pattern
+uv run cm niche new [--name X] [--resume <id>]         # Entrevue d'onboarding (/fin pour finir)
+uv run cm niche list                                   # Lister les niches
+uv run cm niche show <id>                              # Fiche avatar
+uv run cm niche topics <id> [--refresh] [--limit 50]   # Banque de sujets
+uv run cm niche voice <id> [--force]                   # Voix depuis mes vidéos
 uv run cm worker                                       # Traiter la file sans lancer l'API
 uv run ruff format .; uv run ruff check .              # Formatage et lint
 uv run alembic revision --autogenerate -m "message"    # Créer une migration
@@ -112,6 +126,12 @@ API d'analyse : `POST /videos/{id}/analyze` (synchrone, `?force=true` pour refai
 API des patterns : `GET /patterns` (`type`, `niche_id`, `limit`), `GET /patterns/{id}` et
 `GET /patterns/search?q=` (`type`, `k`).
 
+API des niches : `POST /niches/interviews`, `POST /niches/interviews/{id}/answers`,
+`POST /niches/interviews/{id}/finish`, `GET /niches/interviews/{id}`, `GET /niches`,
+`GET /niches/{id}`, `PATCH /niches/{id}` (objets fusionnés, listes remplacées),
+`GET /niches/{id}/versions`, `POST /niches/{id}/topics`, `PATCH /niches/{id}/topics/{topic_id}`,
+`POST /niches/{id}/voice`.
+
 Variables d'environnement (`.env`, voir `.env.example`) : `ANTHROPIC_API_KEY`, `MODEL_ANALYSIS`,
 `MODEL_GENERATION`, `DATA_DIR`, `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`,
 `SCENE_THRESHOLD`, `VISION_BATCH_SIZE`, `MAX_VIDEO_DURATION_S`, `INGEST_WORKER_ENABLED`,
@@ -123,7 +143,7 @@ Prérequis système : ffmpeg et ffprobe dans le PATH.
 
 À mettre à jour à la fin de chaque prompt.
 
-**Dernière mise à jour : 2026-11-05, module de patterns.**
+**Dernière mise à jour : 2026-11-05, module de niche.**
 
 Fait :
 - Fondations : arborescence, configuration, modèles SQLAlchemy, migration `0001`, wrapper Claude
@@ -141,6 +161,9 @@ Fait :
 - `app/patterns/` : `extract_patterns`, branché à la fin de `analyze()`, embeddings locaux,
   dédoublonnage par similarité puis décision de Claude, `search_patterns`, `top_patterns`,
   `winning_combinations`, `GET /patterns*`, `cm patterns`. Migration `0004`.
+- `app/niche/` : entrevue reprenable, profil structuré, fiche avatar, versions, banque de 50 sujets,
+  voix extraite automatiquement après l'ingestion d'une vidéo personnelle, API et `cm niche`.
+  Migration `0005`.
 
 À surveiller :
 - `PATTERN_MERGE_THRESHOLD=0.70`, abaissé depuis 0,85 après mesure sur 6 fiches de test : une vraie
@@ -160,8 +183,15 @@ Validé en conditions réelles, sur une seule vidéo (TikTok français de 122 s,
 - La fusion à 0,70 a soumis une paire à Claude (similarité 0,721), qui a refusé à raison : les deux
   fiches étaient bien différentes.
 
+Validé en conditions réelles pour la niche, avec un créateur fictif sur une base temporaire :
+- Entrevue, profil et banque de sujets en québécois. La voix sur la transcription de keo_fdb.
+  0,45 $ pour une entrevue de 14 réponses, environ 6 s d'attente par question.
+
 Non vérifié en conditions réelles :
-- Vidéos avec montage, texte à l'écran ou cuts : la seule vidéo testée n'en a aucun.
+- Aucune vraie niche n'existe encore : `cm niche new` reste à lancer par l'utilisateur.
+- Voix sur de vraies vidéos personnelles, via le déclenchement automatique après l'ingestion.
+- Vidéos avec montage, texte à l'écran ou cuts : la seule vidéo testée n'en a aucun. Ce n'est pas
+  prioritaire : le créateur de référence (keo_fdb) et le format visé sont sans montage.
 - Instagram et YouTube : seul TikTok a été essayé.
 - Valeur de la passe 2 : elle n'a rien corrigé ni retiré sur cette vidéo, le contrôle par le code non
   plus. Elle coûte autant que la passe 1 car elle réécrit toute l'analyse. À réévaluer sur plus de
@@ -169,7 +199,8 @@ Non vérifié en conditions réelles :
 - Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
-- Modules `niche`, `generate`, `learning`, `agent` et `web/`.
+- Modules `generate`, `learning`, `agent` et `web/`. Format visé pour `generate` : parole en plan
+  unique, sans montage, à la manière de keo_fdb.
 - `POST /videos/{id}/analyze` est synchrone et prend environ 7 minutes. À passer en tâche de fond
   pour le dashboard.
 
