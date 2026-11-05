@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     ingest_worker_enabled: bool = True
 
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
-    pattern_merge_threshold: float = 0.85
+    # Mesuré : une reformulation française du même pattern donne environ 0,73.
+    pattern_merge_threshold: float = 0.70
 
     @field_validator("anthropic_api_key", mode="before")
     @classmethod

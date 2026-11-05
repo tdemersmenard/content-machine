@@ -140,11 +140,10 @@ Fait :
   `winning_combinations`, `GET /patterns*`, `cm patterns`. Migration `0004`.
 
 À surveiller :
-- `PATTERN_MERGE_THRESHOLD=0.85` semble trop haut. Mesure sur 6 fiches de test : une vraie
+- `PATTERN_MERGE_THRESHOLD=0.70`, abaissé depuis 0,85 après mesure sur 6 fiches de test : une vraie
   reformulation française du même pattern donne 0,727, une traduction anglaise 0,897, et la paire
-  différente la plus proche 0,646. À 0,85, les reformulations créent des doublons. Une valeur
-  d'environ 0,70 les attraperait, Claude filtrant ensuite les faux positifs. À revoir sur de vraies
-  données : le seuil n'a été mesuré que sur cet échantillon.
+  différente la plus proche 0,646. Claude filtre ensuite les faux positifs. À revoir sur de vraies
+  données : le seuil n'a été mesuré que sur cet échantillon, et 0,727 est proche de la limite.
 - `top_patterns` : tous les scores valent 0,5 tant que `learning` n'existe pas, le classement se
   fait donc sur le nombre d'exemples. Le score reste global, `niche_id` ne fait que filtrer.
 - `winning_combinations` n'a pas d'endpoint ni de commande, seulement la fonction. Elle pondère par
