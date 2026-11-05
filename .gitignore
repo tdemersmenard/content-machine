@@ -1,0 +1,13 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Données locales : vidéos, frames, exports, base SQLite
+data/*
+!data/.gitkeep
