@@ -1,21 +1,18 @@
 """Routes des niches."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.errors import claude_errors
 from app.db.models import InterviewStatus, Niche, NicheInterview
 from app.db.session import get_db
 from app.llm.client import ClaudeClient, get_claude
-from app.llm.errors import ClaudeCredentialsError, ClaudeError
 from app.niche.interview import (
     InterviewError,
     answer_interview,
@@ -82,16 +79,6 @@ class TopicStatusPatch(BaseModel):
     status: Literal["new", "used", "retired"]
 
 
-@contextmanager
-def _claude_errors() -> Iterator[None]:
-    try:
-        yield
-    except ClaudeCredentialsError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    except (ClaudeError, anthropic.APIError) as exc:
-        raise HTTPException(502, f"Échec de l'appel à Claude : {exc}") from exc
-
-
 def _interview_out(interview: NicheInterview) -> InterviewOut:
     return InterviewOut(
         id=interview.id,
@@ -139,7 +126,7 @@ def _get_interview(db: Session, interview_id: int) -> NicheInterview:
 
 @router.post("/interviews", response_model=InterviewOut, status_code=status.HTTP_201_CREATED)
 def create_interview(body: InterviewStart, db: Db, claude: Claude) -> InterviewOut:
-    with _claude_errors():
+    with claude_errors():
         return _interview_out(start_interview(db, claude, body.name))
 
 
@@ -151,7 +138,7 @@ def get_interview(interview_id: int, db: Db) -> InterviewOut:
 @router.post("/interviews/{interview_id}/answers", response_model=InterviewOut)
 def post_answer(interview_id: int, body: InterviewAnswer, db: Db, claude: Claude) -> InterviewOut:
     interview = _get_interview(db, interview_id)
-    with _claude_errors():
+    with claude_errors():
         try:
             return _interview_out(answer_interview(db, interview, body.answer, claude))
         except InterviewError as exc:
@@ -162,7 +149,7 @@ def post_answer(interview_id: int, body: InterviewAnswer, db: Db, claude: Claude
 def post_finish(interview_id: int, db: Db, claude: Claude) -> InterviewOut:
     """Termine l'entrevue sans attendre que toutes les sections soient couvertes."""
     interview = _get_interview(db, interview_id)
-    with _claude_errors():
+    with claude_errors():
         try:
             return _interview_out(finish_interview(db, interview, claude))
         except InterviewError as exc:
@@ -214,7 +201,7 @@ def list_versions(niche_id: int, db: Db) -> list[VersionOut]:
 def post_topics(niche_id: int, db: Db, claude: Claude) -> NicheOut:
     """Complète la banque jusqu'à 50 sujets actifs."""
     niche = _with_profile(db, niche_id)
-    with _claude_errors():
+    with claude_errors():
         refresh_topics(db, niche, claude)
     return _niche_out(niche)
 
@@ -232,5 +219,5 @@ def patch_topic(niche_id: int, topic_id: str, body: TopicStatusPatch, db: Db) ->
 def post_voice(niche_id: int, db: Db, claude: Claude, force: bool = False) -> VoiceProfile | None:
     """Recalcule la voix depuis mes vidéos. Renvoie null si je n'en ai aucune avec de la parole."""
     niche = _with_profile(db, niche_id)
-    with _claude_errors():
+    with claude_errors():
         return refresh_voice(db, niche, claude, force)

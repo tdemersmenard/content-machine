@@ -20,6 +20,14 @@ from app.db.models import (
     Video,
 )
 from app.db.session import get_session_factory
+from app.generate.service import (
+    GenerationError,
+    GenerationResult,
+    adapt,
+    generate,
+    load_content,
+    script_path,
+)
 from app.ingest.jobs import Submission, Worker, canonical, drain, latest_job, run_job, submit
 from app.ingest.pipeline import IngestDeps, IngestError
 from app.llm.client import ClaudeClient, get_claude
@@ -320,6 +328,54 @@ def niche_voice_command(
             f"{voice.avg_sentence_words:.1f} mots par phrase."
         )
         typer.echo(voice.style_summary)
+
+
+def _report_scripts(result: GenerationResult) -> None:
+    for script in result.scripts:
+        content = load_content(script)
+        typer.echo(
+            f"Script {script.id} : {content.internal_title} "
+            f"(hook {content.final_critique.hook_score}/10, "
+            f"{content.estimated_duration_s:.0f} s, {len(content.to_verify)} à vérifier)"
+        )
+        typer.echo(f"  {script_path(script.id)}")
+    for failure in result.failures:
+        typer.echo(f"Script abandonné : {failure}", err=True)
+
+
+@cli.command("adapt")
+def adapt_command(
+    video_id: int,
+    niche: Annotated[int, typer.Option("--niche", help="Id de la niche.")],
+    variants: Annotated[int, typer.Option("-n", help="Nombre de variantes.")] = 3,
+) -> None:
+    """Adapte une vidéo analysée à ta niche."""
+    with get_session_factory()() as session:
+        try:
+            _report_scripts(adapt(session, video_id, niche, default_claude(), variants))
+        except (LookupError, GenerationError, ClaudeError, anthropic.APIError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+
+
+@cli.command("ideas")
+def ideas_command(
+    niche: Annotated[int, typer.Option("--niche", help="Id de la niche.")],
+    count: Annotated[int, typer.Option("-n", help="Nombre d'idées proposées.")] = 5,
+    develop: Annotated[
+        int, typer.Option("--develop", help="Nombre d'idées développées en scripts.")
+    ] = 3,
+    objectif: Annotated[str | None, typer.Option("--objectif", help="Objectif visé.")] = None,
+) -> None:
+    """Propose des idées et développe les meilleures en scripts."""
+    with get_session_factory()() as session:
+        try:
+            _report_scripts(
+                generate(session, niche, default_claude(), objectif, count, min(develop, count))
+            )
+        except (LookupError, GenerationError, ClaudeError, anthropic.APIError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
 
 
 @cli.command("status")

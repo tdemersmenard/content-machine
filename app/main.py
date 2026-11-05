@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import __version__
-from app.api import analyses, health, niches, patterns, videos
+from app.api import analyses, health, niches, patterns, scripts, videos
 from app.config import get_settings
 from app.ingest.jobs import Worker
 
@@ -25,3 +25,4 @@ app.include_router(videos.router)
 app.include_router(analyses.router)
 app.include_router(patterns.router)
 app.include_router(niches.router)
+app.include_router(scripts.router)

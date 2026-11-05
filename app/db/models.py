@@ -298,6 +298,7 @@ class Script(Base):
     published_video_id: Mapped[int | None] = mapped_column(
         ForeignKey("videos.id", ondelete="SET NULL")
     )
+    predicted_score: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

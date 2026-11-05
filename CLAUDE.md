@@ -82,6 +82,16 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
   générateur doit traiter une hypothèse comme telle.
 - **Voix :** seules les vidéos `is_own_content` comptent. Un tic ou une expression absent mot pour
   mot des transcriptions est écarté.
+- **Garde-fous des scripts (`app/generate/guards.py`) :** le code refuse plus de 5 mots consécutifs de
+  la source ou des exemples de patterns, et les formules `never_say`. Tout chiffre absent du profil
+  et des sujets retenus est marqué `[À VÉRIFIER : x]`, sauf les petits nombres sans unité (3 ou moins).
+  Les nombres écrits en lettres ne sont pas détectés : le prompt exige les mesures en chiffres.
+- **Faits sur le créateur :** un script ne lui invente jamais d'anecdote, de client ou de résultat.
+  Il laisse `[À VÉRIFIER : ...]`, et `to_verify` remonte tout en tête du script.
+- **Leçons :** une leçon écarte un pattern avec une preuve `{"pattern_id": 3, "effect": "avoid"}` dans
+  `evidence`. Le texte de toute leçon active va dans les prompts. `learning` doit respecter ce format.
+- **`predicted_score` :** formule non calibrée (60 % note du hook, 40 % moyenne Beta des patterns),
+  à recalibrer avec `learning`.
 - **Noms de champs Pydantic :** éviter ceux de `BaseModel`, comme `register`. Ils deviennent
   silencieusement optionnels.
 - **Timeline :** `timeline.json` est le contrat avec le module d'analyse. Incrémenter
@@ -109,6 +119,8 @@ uv run cm niche list                                   # Lister les niches
 uv run cm niche show <id>                              # Fiche avatar
 uv run cm niche topics <id> [--refresh] [--limit 50]   # Banque de sujets
 uv run cm niche voice <id> [--force]                   # Voix depuis mes vidéos
+uv run cm adapt <video_id> --niche <id> [-n 3]         # Adapter une vidéo analysée
+uv run cm ideas --niche <id> [-n 5] [--develop 3]      # n idées, les meilleures en scripts
 uv run cm worker                                       # Traiter la file sans lancer l'API
 uv run ruff format .; uv run ruff check .              # Formatage et lint
 uv run alembic revision --autogenerate -m "message"    # Créer une migration
@@ -132,6 +144,10 @@ API des niches : `POST /niches/interviews`, `POST /niches/interviews/{id}/answer
 `GET /niches/{id}/versions`, `POST /niches/{id}/topics`, `PATCH /niches/{id}/topics/{topic_id}`,
 `POST /niches/{id}/voice`.
 
+API des scripts (synchrone, plusieurs minutes) : `POST /scripts/adapt`, `POST /scripts/generate`,
+`GET /scripts` (`niche_id`, `status`, `limit`), `PATCH /scripts/{id}` (`status`, `content`,
+`published_video_id`). Les scripts sont aussi écrits dans `data/scripts/script_<id>.md`.
+
 Variables d'environnement (`.env`, voir `.env.example`) : `ANTHROPIC_API_KEY`, `MODEL_ANALYSIS`,
 `MODEL_GENERATION`, `DATA_DIR`, `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`,
 `SCENE_THRESHOLD`, `VISION_BATCH_SIZE`, `MAX_VIDEO_DURATION_S`, `INGEST_WORKER_ENABLED`,
@@ -143,7 +159,7 @@ Prérequis système : ffmpeg et ffprobe dans le PATH.
 
 À mettre à jour à la fin de chaque prompt.
 
-**Dernière mise à jour : 2026-11-05, module de niche.**
+**Dernière mise à jour : 2026-11-05, module de génération.**
 
 Fait :
 - Fondations : arborescence, configuration, modèles SQLAlchemy, migration `0001`, wrapper Claude
@@ -164,6 +180,9 @@ Fait :
 - `app/niche/` : entrevue reprenable, profil structuré, fiche avatar, versions, banque de 50 sujets,
   voix extraite automatiquement après l'ingestion d'une vidéo personnelle, API et `cm niche`.
   Migration `0005`.
+- `app/generate/` : `adapt` (squelette, transposition, écriture) et `generate` (Thompson sampling,
+  idées, scripts), critique par un viewer impatient avec 2 réécritures au plus, garde-fous, rendu
+  markdown, API et `cm adapt`, `cm ideas`. Migration `0006`.
 
 À surveiller :
 - `PATTERN_MERGE_THRESHOLD=0.70`, abaissé depuis 0,85 après mesure sur 6 fiches de test : une vraie
@@ -183,13 +202,25 @@ Validé en conditions réelles, sur une seule vidéo (TikTok français de 122 s,
 - La fusion à 0,70 a soumis une paire à Claude (similarité 0,721), qui a refusé à raison : les deux
   fiches étaient bien différentes.
 
+Validé en conditions réelles pour la génération, sur la vraie niche 1 :
+- `cm adapt 1 --niche 1 -n 1` : 1,34 $, 7 min 20. `cm ideas --niche 1 -n 5 --develop 1` : environ
+  1 $, 5 min 30. Une adaptation à 3 variantes (le défaut) reviendra à environ 3,50 $ et 15 à 20 min.
+- Le hook plafonne à 7/10 sur les deux scripts après 2 réécritures. Le critique réclame surtout le
+  « comment » : le profil ne contient pas l'histoire réelle du créateur (premier client, façon de
+  trouver des clients). C'est le principal levier de qualité.
+- `script_1` date d'avant la correction du marquage des chiffres, il en a trop.
+
 Validé en conditions réelles pour la niche, avec un créateur fictif sur une base temporaire :
 - Entrevue, profil et banque de sujets en québécois. La voix sur la transcription de keo_fdb.
   0,45 $ pour une entrevue de 14 réponses, environ 6 s d'attente par question.
 
 Non vérifié en conditions réelles :
-- Aucune vraie niche n'existe encore : `cm niche new` reste à lancer par l'utilisateur.
-- Voix sur de vraies vidéos personnelles, via le déclenchement automatique après l'ingestion.
+- Voix sur de vraies vidéos personnelles, via le déclenchement automatique après l'ingestion. Sans
+  `voice_profile`, les scripts ne sont pas calés sur la vraie façon de parler du créateur, et la
+  durée vient du débit de la vidéo source (`adapt`) ou d'un défaut de 3 mots/s (`generate`).
+- Thompson sampling sur de vraies données : tous les scores valent 0,5 et la bibliothèque compte
+  8 patterns tirés d'une seule vidéo, donc le tirage est encore presque aléatoire.
+- Le critique et l'auteur sont le même modèle : sa note n'est pas une mesure indépendante.
 - Vidéos avec montage, texte à l'écran ou cuts : la seule vidéo testée n'en a aucun. Ce n'est pas
   prioritaire : le créateur de référence (keo_fdb) et le format visé sont sans montage.
 - Instagram et YouTube : seul TikTok a été essayé.
@@ -199,10 +230,9 @@ Non vérifié en conditions réelles :
 - Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
-- Modules `generate`, `learning`, `agent` et `web/`. Format visé pour `generate` : parole en plan
-  unique, sans montage, à la manière de keo_fdb.
-- `POST /videos/{id}/analyze` est synchrone et prend environ 7 minutes. À passer en tâche de fond
-  pour le dashboard.
+- Modules `learning`, `agent` et `web/`.
+- `POST /videos/{id}/analyze` et `POST /scripts/*` sont synchrones et prennent plusieurs minutes. À
+  passer en tâche de fond pour le dashboard.
 
 Décisions :
 - Ingestion de vidéos de tiers via yt-dlp validée pour un usage local. À réexaminer si l'outil
