@@ -213,6 +213,25 @@ def test_api_error_is_logged_and_reraised() -> None:
     assert record.cost_usd is None
 
 
+def test_unconstrained_call_drops_the_api_format_and_still_validates() -> None:
+    sdk = FakeSDK(reply("pas du json"), reply())
+
+    result = run(sdk, constrained=False)
+
+    assert "format" not in sdk.requests[0]["output_config"]
+    assert result.attempts == 2
+
+
+@pytest.mark.parametrize(
+    "text",
+    ['```json\n{"echo": "ok"}\n```', '```\n{"echo": "ok"}\n```', '  {"echo": "ok"}\n'],
+)
+def test_code_fence_does_not_cost_a_retry(text: str) -> None:
+    sdk = FakeSDK(reply(text))
+
+    assert run(sdk, constrained=False).attempts == 1
+
+
 def test_missing_credentials_give_a_clear_error() -> None:
     error = TypeError('"Could not resolve authentication method. Expected one of api_key"')
 

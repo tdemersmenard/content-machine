@@ -59,8 +59,11 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
 - **Stats des vidéos :** une valeur indisponible reste `null`, jamais estimée ni mise à 0.
 - **Étapes d'ingestion :** chaque étape enregistre son résultat et se saute si elle est déjà faite.
   Toute nouvelle étape payante doit respecter cette règle pour qu'une reprise ne repaie rien.
-- **Schémas envoyés à Claude :** l'API refuse plus de 24 paramètres optionnels et 16 unions. Pas de
-  `| None` ni de valeur par défaut dans les gros schémas : une absence est une liste vide.
+- **Schémas envoyés à Claude :** l'API refuse plus de 24 paramètres optionnels et 16 unions, et une
+  grammaire compilée trop grosse (« compiled grammar is too large »). Le schéma d'analyse dépasse
+  cette dernière limite : un gros schéma passe `constrained=False`, et son prompt doit contenir
+  `{{ output_schema }}`. Pydantic et le retry valident de la même façon dans les deux modes.
+  Pas de `| None` ni de valeur par défaut dans les gros schémas : une absence est une liste vide.
 - **Preuves de l'analyse :** toute affirmation est un `Claim` avec au moins une preuve horodatée.
   Le contrôle par le code (`app/analysis/evidence.py`) passe après Claude et a le dernier mot.
 - **Ratios de performance :** calculés par le code, jamais par Claude.
@@ -149,24 +152,26 @@ Fait :
 - `winning_combinations` n'a pas d'endpoint ni de commande, seulement la fonction. Elle pondère par
   le percentile de vues brutes, qui avantage les gros comptes.
 
+Validé en conditions réelles, sur une seule vidéo (TikTok français de 122 s, plan unique) :
+- Toute la chaîne : yt-dlp, Whisper `small` en français, vision, promesse, analyse en 2 passes,
+  extraction et fusion de patterns, sans aucun retry. 8 patterns abstraits créés.
+- Durée : ingestion 2 min, analyse et patterns 7 min. Coût total 1,68 $ : ingestion 0,26 $, passe 1
+  0,62 $, passe 2 0,62 $, patterns 0,19 $.
+- La fusion à 0,70 a soumis une paire à Claude (similarité 0,721), qui a refusé à raison : les deux
+  fiches étaient bien différentes.
+
 Non vérifié en conditions réelles :
-- Aucun appel réel à Claude : aucune clé n'est disponible. Vision, promesse, analyse et patterns ne
-  sont testés qu'à travers le vrai SDK sur un transport simulé, donc la qualité des prompts
-  `frames/v1`, `promise/v1`, `analysis/v1`, `analysis_verify/v1`, `pattern_extract/v1` et
-  `pattern_merge/v1` reste inconnue. Sans clé, une ingestion s'arrête à l'étape `vision`, donc aucune
-  vidéo réelle ne peut encore être analysée, et la bibliothèque reste vide.
-- Schéma d'analyse : il respecte les limites publiées (0 optionnel, 0 union), mais l'API a aussi une
-  limite interne non documentée (« Schema is too complex for compilation »). À confirmer au
-  premier appel réel. Si elle est atteinte, découper l'analyse en plusieurs appels.
-- Coût réel d'une analyse : jamais mesuré, à relever dans `llm_calls`.
-- Transcription française : seul l'anglais a été testé, cette machine n'a pas de voix française.
-- Téléchargement depuis TikTok, Instagram et YouTube : yt-dlp n'a été testé que sur un serveur local.
-- Modèle Whisper `small` : les essais réels ont utilisé `tiny`. `small` se télécharge au premier usage.
+- Vidéos avec montage, texte à l'écran ou cuts : la seule vidéo testée n'en a aucun.
+- Instagram et YouTube : seul TikTok a été essayé.
+- Valeur de la passe 2 : elle n'a rien corrigé ni retiré sur cette vidéo, le contrôle par le code non
+  plus. Elle coûte autant que la passe 1 car elle réécrit toute l'analyse. À réévaluer sur plus de
+  vidéos, par exemple en ne lui faisant renvoyer que les changements.
+- Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
 - Modules `niche`, `generate`, `learning`, `agent` et `web/`.
-- `POST /videos/{id}/analyze` est synchrone (quelques minutes). À passer en tâche de fond si le
-  dashboard en a besoin.
+- `POST /videos/{id}/analyze` est synchrone et prend environ 7 minutes. À passer en tâche de fond
+  pour le dashboard.
 
 Décisions :
 - Ingestion de vidéos de tiers via yt-dlp validée pour un usage local. À réexaminer si l'outil

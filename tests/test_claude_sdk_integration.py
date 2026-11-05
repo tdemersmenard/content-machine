@@ -265,10 +265,12 @@ def test_full_analysis_through_the_real_sdk(db: Session, sample_video: Path) -> 
     assert row.model == MODEL
     first = json.loads(requests[0].content)
     assert [block["type"] for block in first["messages"][0]["content"]].count("image") >= 5
-    schema = first["output_config"]["format"]["schema"]
-    assert "anyOf" not in json.dumps(schema)
-    assert schema["additionalProperties"] is False
+    # Trop gros pour la contrainte de l'API : le schéma voyage dans le prompt.
+    assert "format" not in first["output_config"]
+    assert "psychological_mechanism" in first["messages"][0]["content"][-1]["text"]
     second = json.loads(requests[1].content)
+    assert "format" not in second["output_config"]
+    assert "corrections" in second["messages"][0]["content"][-1]["text"]
     assert all(block["type"] == "text" for block in second["messages"][0]["content"])
     assert [r.prompt_version for r in records] == [
         "analysis/v1",

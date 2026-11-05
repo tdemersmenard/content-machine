@@ -40,3 +40,7 @@ Analyse à vérifier :
 Rejets du contrôle automatique (code_findings) :
 
 {{ code_findings }}
+
+Réponds uniquement par un objet JSON conforme à ce schéma, sans texte autour ni bloc de code. Tous les champs sont obligatoires. Renvoie l'analyse complète, pas seulement ce qui change.
+
+{{ output_schema }}

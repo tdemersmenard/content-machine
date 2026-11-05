@@ -3,9 +3,11 @@
 Deux règles de conception, vérifiées par tests/test_analysis_schema.py :
 
 - Toute affirmation est un `Claim`, qui porte au moins une preuve horodatée.
-- Aucun champ de ce que Claude remplit n'est optionnel ni nullable : l'API limite les schémas
-  à 24 paramètres optionnels et 16 unions. Une absence s'exprime par une liste vide, ce qui
-  permet aussi de retirer une affirmation sans preuve sans casser le schéma.
+- Aucun champ de ce que Claude remplit n'est optionnel ni nullable. Une absence s'exprime par une
+  liste vide, ce qui permet de retirer une affirmation sans preuve sans casser le schéma.
+
+Ce schéma dépasse la limite de grammaire de l'API : il est envoyé dans le prompt
+(`constrained=False`) et validé ici par Pydantic.
 
 Un champ `Claim` seul marque l'élément principal d'un objet de liste : s'il tombe, l'objet entier
 est retiré. Les objets hors liste ne contiennent donc que des `list[Claim]`.

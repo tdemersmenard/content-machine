@@ -59,3 +59,7 @@ Timeline :
 {{ timeline }}
 
 Images des frames du hook, dans l'ordre, en secondes : {{ timestamps | join(', ') }}
+
+Réponds uniquement par un objet JSON conforme à ce schéma, sans texte autour ni bloc de code. Tous les champs sont obligatoires.
+
+{{ output_schema }}

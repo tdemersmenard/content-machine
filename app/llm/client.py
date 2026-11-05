@@ -7,7 +7,9 @@
 """
 
 import base64
+import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,6 +54,8 @@ IMAGE_MEDIA_TYPES = {
 }
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
+
+_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,12 @@ def _correction_message(error: ValidationError) -> str:
     )
 
 
+def _strip_code_fence(text: str) -> str:
+    """Sans contrainte d'API, un bloc ```json ne doit pas coûter un retry complet."""
+    match = _CODE_FENCE_RE.fullmatch(text.strip())
+    return match.group(1) if match else text
+
+
 class ClaudeClient:
     def __init__(self, sdk: Anthropic, call_logger: CallLogger = db_call_logger) -> None:
         self._sdk = sdk
@@ -146,16 +156,29 @@ class ClaudeClient:
         images: list[Path] | None = None,
         effort: Effort = "high",
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        constrained: bool = True,
     ) -> ClaudeResult[T]:
         """Appelle Claude et renvoie une sortie validée par `schema`.
+
+        Avec `constrained=False`, l'API ne contraint pas la sortie : c'est nécessaire pour les
+        gros schémas, qu'elle refuse (« compiled grammar is too large »). Le prompt reçoit alors
+        le schéma dans la variable `output_schema`. La validation Pydantic et le retry sont les
+        mêmes dans les deux modes.
 
         Lève ClaudeInvalidOutputError, ClaudeRefusalError, ClaudeTruncatedError, ou
         l'erreur du SDK (anthropic.APIError) une fois ses retries épuisés.
         """
         loaded = load_prompt(prompt, version)
+        if not constrained:
+            output_schema = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+            variables = {**(variables or {}), "output_schema": output_schema}
         content: list[dict[str, Any]] = [_image_block(path) for path in images or []]
         content.append({"type": "text", "text": loaded.render_user(variables)})
         messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+
+        output_config: dict[str, Any] = {"effort": effort}
+        if constrained:
+            output_config["format"] = {"type": "json_schema", "schema": transform_schema(schema)}
 
         params: dict[str, Any] = {
             "model": model,
@@ -167,10 +190,7 @@ class ClaudeClient:
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            "output_config": {
-                "effort": effort,
-                "format": {"type": "json_schema", "schema": transform_schema(schema)},
-            },
+            "output_config": output_config,
         }
         if model in FALLBACK_MODELS:
             params["betas"] = [FALLBACK_BETA]
@@ -218,7 +238,7 @@ class ClaudeClient:
                 raise ClaudeTruncatedError(error)
 
             try:
-                data = schema.model_validate_json(text)
+                data = schema.model_validate_json(_strip_code_fence(text))
             except ValidationError as exc:
                 self._record(
                     LLMCallRecord(

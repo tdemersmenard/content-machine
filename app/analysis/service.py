@@ -96,6 +96,7 @@ def _run_draft(
         },
         images=[_root() / frame.frame_path for frame in frames],
         effort="high",
+        constrained=False,  # Schéma trop gros pour la contrainte de l'API.
     )
     path.write_text(result.data.model_dump_json(), encoding="utf-8")
     return result.data
@@ -161,6 +162,7 @@ def analyze(
             ),
         },
         effort="high",
+        constrained=False,  # Schéma trop gros pour la contrainte de l'API.
     )
 
     final = verified.data.analysis
