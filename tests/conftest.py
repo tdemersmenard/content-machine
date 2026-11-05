@@ -9,6 +9,7 @@ from alembic import command
 from app.config import get_settings
 from app.db.session import get_engine, get_session_factory
 from app.llm.client import get_claude
+from tests.ingest_helpers import make_video
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -40,6 +41,17 @@ def isolated_env(
     yield
     get_engine().dispose()
     clear_caches()
+
+
+@pytest.fixture(scope="session")
+def sample_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Vidéo de 9 s, 3 plans de couleur, voix synthétique."""
+    return make_video(tmp_path_factory.mktemp("media") / "sample.mp4")
+
+
+@pytest.fixture(scope="session")
+def silent_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return make_video(tmp_path_factory.mktemp("media") / "silent.mp4", "yellow", voice=False)
 
 
 @pytest.fixture

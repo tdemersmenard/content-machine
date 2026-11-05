@@ -33,6 +33,30 @@ class LessonScope(StrEnum):
     NICHE = "niche"
 
 
+class JobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class SourceType(StrEnum):
+    FILE = "file"  # Fichier local : copié, l'original reste en place.
+    UPLOAD = "upload"  # Fichier reçu par l'API : déplacé.
+    URL = "url"
+
+
+class PatternType(StrEnum):
+    HOOK = "hook"
+    ANGLE = "angle"
+    STRUCTURE = "structure"
+    RETENTION_DEVICE = "retention_device"
+    ENDING = "ending"
+    ENGAGEMENT_TRIGGER = "engagement_trigger"
+    VISUAL_DEVICE = "visual_device"
+    PACING = "pacing"
+
+
 class LLMCallStatus(StrEnum):
     OK = "ok"
     INVALID_OUTPUT = "invalid_output"
@@ -60,6 +84,7 @@ class Video(Base):
     source_url: Mapped[str | None] = mapped_column(String(2048), unique=True)
     platform: Mapped[str | None] = mapped_column(String(32))
     creator: Mapped[str | None] = mapped_column(String(255))
+    creator_followers: Mapped[int | None] = mapped_column(BigInteger)
     niche_source: Mapped[str | None] = mapped_column(String(255))
     duration_s: Mapped[float | None] = mapped_column(Float)
     posted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -70,7 +95,35 @@ class Video(Base):
     saves: Mapped[int | None] = mapped_column(BigInteger)
     is_own_content: Mapped[bool] = mapped_column(default=False)
     file_path: Mapped[str | None] = mapped_column(String(1024))
+    file_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    hashtags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sound: Mapped[str | None] = mapped_column(String(512))
+    signals: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    timeline_path: Mapped[str | None] = mapped_column(String(1024))
+    # Même fichier reçu via une autre URL : cette ligne pointe vers la vidéo de référence.
+    duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"))
+    ingested_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class IngestJob(Base):
+    """File de jobs d'ingestion."""
+
+    __tablename__ = "ingest_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[SourceType] = mapped_column(_enum(SourceType, "source_type"))
+    status: Mapped[JobStatus] = mapped_column(
+        _enum(JobStatus, "job_status"), default=JobStatus.QUEUED, index=True
+    )
+    stage: Mapped[str | None] = mapped_column(String(32))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class Transcript(Base):
@@ -98,6 +151,27 @@ class Shot(Base):
     visual_description: Mapped[str | None] = mapped_column(Text)
 
 
+class Frame(Base):
+    """Frame clé : début de plan ou frame forcée. Les champs visuels viennent de Claude."""
+
+    __tablename__ = "frames"
+    __table_args__ = (UniqueConstraint("video_id", "t_s", name="uq_frames_video_id_t_s"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), index=True)
+    t_s: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(16))
+    shot_index: Mapped[int] = mapped_column(Integer)
+    frame_path: Mapped[str] = mapped_column(String(1024))
+    on_screen_text: Mapped[str | None] = mapped_column(Text)
+    visual_description: Mapped[str | None] = mapped_column(Text)
+    framing: Mapped[str | None] = mapped_column(String(32))
+    face_present: Mapped[bool | None] = mapped_column()
+    camera_motion: Mapped[str | None] = mapped_column(String(32))
+    graphic_elements: Mapped[list[str] | None] = mapped_column(JSON)
+    analyzed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
 class Analysis(Base):
     __tablename__ = "analyses"
 
@@ -106,6 +180,10 @@ class Analysis(Base):
     prompt_version: Mapped[str] = mapped_column(String(64))
     model: Mapped[str] = mapped_column(String(64))
     json_result: Mapped[dict[str, Any]] = mapped_column(JSON)
+    # Extraction des patterns : les candidats déjà payés sont gardés pour pouvoir reprendre.
+    pattern_candidates: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    pattern_candidates_done: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    patterns_extracted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -117,8 +195,12 @@ class Pattern(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(Text, default="")
     template: Mapped[str] = mapped_column(Text, default="")
+    when_to_use: Mapped[str] = mapped_column(Text, default="", server_default="")
+    when_not_to_use: Mapped[str] = mapped_column(Text, default="", server_default="")
     examples: Mapped[list[Any]] = mapped_column(JSON, default=list)
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    embedding_model: Mapped[str | None] = mapped_column(String(128))
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
     # Paramètres d'une loi Beta : 1/1 est l'a priori neutre.
     score_alpha: Mapped[float] = mapped_column(Float, default=1.0)
     score_beta: Mapped[float] = mapped_column(Float, default=1.0)

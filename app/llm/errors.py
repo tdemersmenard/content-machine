@@ -9,6 +9,10 @@ class ClaudeError(Exception):
     """Erreur métier d'un appel à Claude. Les erreurs réseau restent celles du SDK."""
 
 
+class ClaudeCredentialsError(ClaudeError):
+    """Aucun identifiant Anthropic disponible."""
+
+
 class ClaudeInvalidOutputError(ClaudeError):
     """La sortie reste invalide après le retry."""
 

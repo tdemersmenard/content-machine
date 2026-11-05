@@ -1,4 +1,4 @@
-"""Chargement des prompts versionnés de app/prompts/<nom>/v<N>.md.
+"""Chargement des prompts versionnés de app/prompts/<nom>_v<N>.md.
 
 Format d'un fichier :
 
@@ -57,7 +57,7 @@ def load_prompt(name: str, version: str, prompts_dir: Path = PROMPTS_DIR) -> Pro
     if not _NAME_RE.match(name) or not _VERSION_RE.match(version):
         raise PromptError(f"Nom ou version de prompt invalide : {name!r}, {version!r}")
 
-    path = prompts_dir / name / f"{version}.md"
+    path = prompts_dir / f"{name}_{version}.md"
     if not path.is_file():
         raise PromptError(f"Prompt introuvable : {path}")
 

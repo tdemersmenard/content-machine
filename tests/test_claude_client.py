@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.models import LLMCall, LLMCallStatus
 from app.llm.client import FALLBACK_BETA, ClaudeClient, LLMCallRecord, db_call_logger
 from app.llm.errors import (
+    ClaudeCredentialsError,
     ClaudeInvalidOutputError,
     ClaudeRefusalError,
     ClaudeTruncatedError,
@@ -210,6 +211,18 @@ def test_api_error_is_logged_and_reraised() -> None:
     assert record.status is LLMCallStatus.ERROR
     assert "réseau coupé" in record.error
     assert record.cost_usd is None
+
+
+def test_missing_credentials_give_a_clear_error() -> None:
+    error = TypeError('"Could not resolve authentication method. Expected one of api_key"')
+
+    with pytest.raises(ClaudeCredentialsError, match="ANTHROPIC_API_KEY"):
+        run(FakeSDK(error))
+
+
+def test_other_type_errors_are_not_disguised() -> None:
+    with pytest.raises(TypeError, match="autre bug"):
+        run(FakeSDK(TypeError("autre bug")))
 
 
 def test_fallback_cost_uses_each_served_model() -> None:

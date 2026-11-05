@@ -5,14 +5,27 @@ réellement sérialisée et le parsing réel de la réponse en streaming.
 """
 
 import json
+from pathlib import Path
 from typing import Any
 
 import anthropic
 import httpx2
 from anthropic import Anthropic, DefaultHttpxClient
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app.analysis.service import analyze
+from app.db.models import Pattern
+from app.ingest.jobs import ingest
+from app.ingest.schemas import Word
+from app.ingest.signals import find_promise
+from app.ingest.vision import analyze_batch
 from app.llm.client import FALLBACK_BETA, ClaudeClient, LLMCallRecord
+from app.patterns.schemas import MergeDecision
+from tests.analysis_helpers import sample_analysis
+from tests.ingest_helpers import make_deps
+from tests.pattern_helpers import FakeEmbedder
 
 MODEL = "claude-opus-5-5"
 
@@ -158,6 +171,132 @@ def test_usage_iterations_are_read_from_the_real_response() -> None:
 
     assert result.cost_usd == 9.0
     assert records[0].input_tokens == 2_000_000
+
+
+def observation(number: int) -> dict[str, Any]:
+    return {
+        "image_number": number,
+        "on_screen_text": "3 ASTUCES",
+        "visual_description": "Une personne face caméra",
+        "framing": "close_up",
+        "face_present": True,
+        "camera_motion": "handheld",
+        "graphic_elements": ["sous-titres"],
+    }
+
+
+def test_vision_batch_through_the_real_sdk(tmp_path: Path) -> None:
+    images = []
+    for index in range(2):
+        path = tmp_path / f"f{index}.jpg"
+        path.write_bytes(b"jpeg")
+        images.append((float(index), path))
+    reply = {"observations": [observation(2), observation(1)]}
+    client, requests, _ = client_replaying(sse(json.dumps(reply)))
+
+    seen = analyze_batch(client, images, MODEL)
+
+    assert [item.image_number for item in seen] == [1, 2]
+    body = json.loads(requests[0].content)
+    content = body["messages"][0]["content"]
+    assert [block["type"] for block in content] == ["image", "image", "text"]
+    assert "Image 2 : 1.00 s" in content[2]["text"]
+    assert body["output_config"]["effort"] == "medium"
+    schema = json.dumps(body["output_config"]["format"]["schema"])
+    assert "screen_record" in schema
+
+
+def test_incomplete_vision_batch_is_corrected_by_the_retry(tmp_path: Path) -> None:
+    path = tmp_path / "f.jpg"
+    path.write_bytes(b"jpeg")
+    images = [(0.0, path), (1.0, path)]
+    client, requests, _ = client_replaying(
+        sse(json.dumps({"observations": [observation(1)]})),
+        sse(json.dumps({"observations": [observation(1), observation(2)]})),
+    )
+
+    assert len(analyze_batch(client, images, MODEL)) == 2
+    assert "une observation par image" in json.loads(requests[1].content)["messages"][2]["content"]
+
+
+def test_promise_through_the_real_sdk() -> None:
+    words = [Word(word=w, start=i * 1.0, end=i * 1.0 + 0.5) for i, w in enumerate("a b c".split())]
+    reply = {"found": True, "promise": "b c", "start_word": 1, "end_word": 2}
+    client, requests, _ = client_replaying(sse(json.dumps(reply)))
+
+    promise = find_promise(client, words, MODEL)
+
+    assert (promise.text, promise.start_s, promise.end_s) == ("b c", 1.0, 2.5)
+    assert "[0]a [1]b [2]c" in json.loads(requests[0].content)["messages"][0]["content"][0]["text"]
+
+
+def test_no_promise_through_the_real_sdk() -> None:
+    reply = {"found": False, "promise": None, "start_word": None, "end_word": None}
+    client, _, _ = client_replaying(sse(json.dumps(reply)))
+
+    assert find_promise(client, [Word(word="a", start=0, end=1)], MODEL) is None
+
+
+def test_full_analysis_through_the_real_sdk(db: Session, sample_video: Path) -> None:
+    video_id = ingest(str(sample_video), deps=make_deps()).video.id
+    draft = sample_analysis()
+    verified = {"analysis": draft, "corrections": [], "removals": []}
+    candidate = {
+        "type": "hook",
+        "name": "Promesse chiffrée",
+        "description": "Annonce un gain mesurable.",
+        "template": "Comment [résultat] en [durée]",
+        "when_to_use": "Quand le gain est mesurable.",
+        "when_not_to_use": "Quand le gain est incertain.",
+        "role": "opening",
+        "evidence": [
+            {"kind": "quote", "start_s": 2.6, "end_s": 3.45, "excerpt": "double your views"}
+        ],
+    }
+    client, requests, records = client_replaying(
+        sse(json.dumps(draft)),
+        sse(json.dumps(verified)),
+        sse(json.dumps({"candidates": [candidate]})),
+    )
+
+    row = analyze(db, video_id, client, embedder=FakeEmbedder())
+
+    assert row.prompt_version == "analysis/v1"
+    assert row.model == MODEL
+    first = json.loads(requests[0].content)
+    assert [block["type"] for block in first["messages"][0]["content"]].count("image") >= 5
+    schema = first["output_config"]["format"]["schema"]
+    assert "anyOf" not in json.dumps(schema)
+    assert schema["additionalProperties"] is False
+    second = json.loads(requests[1].content)
+    assert all(block["type"] == "text" for block in second["messages"][0]["content"])
+    assert [r.prompt_version for r in records] == [
+        "analysis/v1",
+        "analysis_verify/v1",
+        "pattern_extract/v1",
+    ]
+    assert row.patterns_extracted_at is not None
+    assert db.scalars(select(Pattern)).one().name == "Promesse chiffrée"
+    extract_schema = json.loads(requests[2].content)["output_config"]["format"]["schema"]
+    assert "retention_device" in json.dumps(extract_schema)
+
+
+def test_merge_decision_through_the_real_sdk() -> None:
+    reply = {"same_mechanism": True, "reasoning": "Même ressort", "merged_description": "Enrichie"}
+    client, requests, _ = client_replaying(sse(json.dumps(reply)))
+
+    result = client.call_json(
+        prompt="pattern_merge",
+        version="v1",
+        schema=MergeDecision,
+        model=MODEL,
+        variables={"existing": '{"name": "A"}', "candidate": '{"name": "B"}'},
+    )
+
+    assert result.data.merged_description == "Enrichie"
+    text = json.loads(requests[0].content)["messages"][0]["content"][0]["text"]
+    assert '{"name": "A"}' in text
+    assert '{"name": "B"}' in text
 
 
 def test_http_error_is_logged_and_keeps_the_sdk_type() -> None:

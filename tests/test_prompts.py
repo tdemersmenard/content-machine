@@ -7,9 +7,7 @@ from app.llm.prompts import load_prompt
 
 
 def write_prompt(root: Path, body: str, name: str = "demo", version: str = "v1") -> None:
-    folder = root / name
-    folder.mkdir(parents=True)
-    (folder / f"{version}.md").write_bytes(body.encode("utf-8"))
+    (root / f"{name}_{version}.md").write_bytes(body.encode("utf-8"))
 
 
 VALID = "---\nname: demo\nversion: v1\n---\n# system\nStatique.\n\n# user\nBonjour {{ nom }}\n"
@@ -40,7 +38,7 @@ def test_missing_variable_raises(tmp_path: Path) -> None:
 
 def test_hash_ignores_line_endings_but_detects_edits(tmp_path: Path) -> None:
     write_prompt(tmp_path, VALID)
-    path = tmp_path / "demo" / "v1.md"
+    path = tmp_path / "demo_v1.md"
     lf = load_prompt("demo", "v1", tmp_path)
 
     path.write_bytes(VALID.replace("\n", "\r\n").encode("utf-8"))

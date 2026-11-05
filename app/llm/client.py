@@ -22,7 +22,12 @@ from pydantic import BaseModel, ValidationError
 from app.config import get_settings
 from app.db.models import LLMCall, LLMCallStatus
 from app.db.session import get_session_factory
-from app.llm.errors import ClaudeInvalidOutputError, ClaudeRefusalError, ClaudeTruncatedError
+from app.llm.errors import (
+    ClaudeCredentialsError,
+    ClaudeInvalidOutputError,
+    ClaudeRefusalError,
+    ClaudeTruncatedError,
+)
 from app.llm.pricing import TokenUsage, compute_cost
 from app.llm.prompts import Prompt, load_prompt
 
@@ -264,6 +269,13 @@ class ClaudeClient:
             with self._sdk.beta.messages.stream(**params, messages=messages) as stream:
                 message = stream.get_final_message()
                 request_id = getattr(stream, "request_id", None)
+        except TypeError as exc:
+            # Le SDK signale l'absence d'identifiants par un TypeError avant tout envoi.
+            if "authentication" not in str(exc):
+                raise
+            raise ClaudeCredentialsError(
+                "Aucune clé API : renseigne ANTHROPIC_API_KEY dans le fichier .env."
+            ) from exc
         except anthropic.APIError as exc:
             self._record(
                 LLMCallRecord(

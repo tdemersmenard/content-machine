@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     model_generation: str = DEFAULT_MODEL
     data_dir: Path = Path("data")
 
+    whisper_model: str = "small"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+    scene_threshold: float = 0.3
+    vision_batch_size: int = 10
+    # Garde-fou de coût : le nombre de frames envoyées à Claude croît avec la durée.
+    max_video_duration_s: float = 600.0
+    ingest_worker_enabled: bool = True
+
+    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    pattern_merge_threshold: float = 0.85
+
     @field_validator("anthropic_api_key", mode="before")
     @classmethod
     def _blank_key_is_none(cls, value: object) -> object:

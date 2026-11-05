@@ -1,0 +1,741 @@
+{
+  "$defs": {
+    "AlternativeAngle": {
+      "properties": {
+        "angle": {
+          "title": "Angle",
+          "type": "string"
+        },
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "comparison": {
+          "enum": [
+            "original_better",
+            "original_worse",
+            "equivalent"
+          ],
+          "title": "Comparison",
+          "type": "string"
+        }
+      },
+      "required": [
+        "angle",
+        "comparison",
+        "claim"
+      ],
+      "title": "AlternativeAngle",
+      "type": "object"
+    },
+    "Angle": {
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/AlternativeAngle"
+          },
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "audience_beliefs": {
+          "items": {
+            "$ref": "#/$defs/AudienceBelief"
+          },
+          "title": "Audience Beliefs",
+          "type": "array"
+        },
+        "chosen_angle": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Chosen Angle",
+          "type": "array"
+        },
+        "implicit_promise": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Implicit Promise",
+          "type": "array"
+        },
+        "promise_payoff": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Promise Payoff",
+          "type": "array"
+        },
+        "raw_topic": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Raw Topic",
+          "type": "array"
+        }
+      },
+      "required": [
+        "raw_topic",
+        "chosen_angle",
+        "audience_beliefs",
+        "implicit_promise",
+        "promise_payoff",
+        "alternatives"
+      ],
+      "title": "Angle",
+      "type": "object"
+    },
+    "AudienceBelief": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "stance": {
+          "enum": [
+            "attacks",
+            "confirms"
+          ],
+          "title": "Stance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stance",
+        "claim"
+      ],
+      "title": "AudienceBelief",
+      "type": "object"
+    },
+    "Beat": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "end_s": {
+          "minimum": 0,
+          "title": "End S",
+          "type": "number"
+        },
+        "role": {
+          "enum": [
+            "hook",
+            "setup",
+            "tension",
+            "proof",
+            "twist",
+            "payoff",
+            "cta",
+            "transition",
+            "other"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "start_s",
+        "end_s",
+        "role",
+        "claim"
+      ],
+      "title": "Beat",
+      "type": "object"
+    },
+    "Claim": {
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement",
+        "evidence"
+      ],
+      "title": "Claim",
+      "type": "object"
+    },
+    "CommentTrigger": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "trigger": {
+          "enum": [
+            "debate",
+            "identification",
+            "open_question",
+            "deliberate_mistake",
+            "other"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trigger",
+        "claim"
+      ],
+      "title": "CommentTrigger",
+      "type": "object"
+    },
+    "CreatorElement": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "source": {
+          "enum": [
+            "charisma",
+            "existing_audience",
+            "news_timing",
+            "trending_sound",
+            "other"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "claim"
+      ],
+      "title": "CreatorElement",
+      "type": "object"
+    },
+    "DropRisk": {
+      "properties": {
+        "compensation": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Compensation",
+          "type": "array"
+        },
+        "risk": {
+          "$ref": "#/$defs/Claim"
+        }
+      },
+      "required": [
+        "risk",
+        "compensation"
+      ],
+      "title": "DropRisk",
+      "type": "object"
+    },
+    "EmotionPoint": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "emotion": {
+          "title": "Emotion",
+          "type": "string"
+        },
+        "end_s": {
+          "minimum": 0,
+          "title": "End S",
+          "type": "number"
+        },
+        "intensity": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Intensity",
+          "type": "integer"
+        },
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "start_s",
+        "end_s",
+        "emotion",
+        "intensity",
+        "claim"
+      ],
+      "title": "EmotionPoint",
+      "type": "object"
+    },
+    "Engagement": {
+      "properties": {
+        "comments": {
+          "items": {
+            "$ref": "#/$defs/CommentTrigger"
+          },
+          "title": "Comments",
+          "type": "array"
+        },
+        "saves": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Saves",
+          "type": "array"
+        },
+        "shares": {
+          "items": {
+            "$ref": "#/$defs/ShareTrigger"
+          },
+          "title": "Shares",
+          "type": "array"
+        }
+      },
+      "required": [
+        "comments",
+        "shares",
+        "saves"
+      ],
+      "title": "Engagement",
+      "type": "object"
+    },
+    "Evidence": {
+      "properties": {
+        "end_s": {
+          "minimum": 0,
+          "title": "End S",
+          "type": "number"
+        },
+        "excerpt": {
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "quote",
+            "on_screen_text",
+            "frame",
+            "signal",
+            "metadata"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "start_s",
+        "end_s",
+        "excerpt"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Hook": {
+      "properties": {
+        "alignment": {
+          "enum": [
+            "same_message",
+            "complementary",
+            "contradictory"
+          ],
+          "title": "Alignment",
+          "type": "string"
+        },
+        "alignment_explanation": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Alignment Explanation",
+          "type": "array"
+        },
+        "hook_type": {
+          "enum": [
+            "contrarian",
+            "result_first",
+            "question",
+            "curiosity_gap",
+            "visual_pattern_interrupt",
+            "identification",
+            "fear_loss",
+            "shock_number",
+            "in_medias_res",
+            "demonstration",
+            "other"
+          ],
+          "title": "Hook Type",
+          "type": "string"
+        },
+        "hook_type_justification": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Hook Type Justification",
+          "type": "array"
+        },
+        "hook_type_other": {
+          "title": "Hook Type Other",
+          "type": "string"
+        },
+        "on_screen_text": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "On Screen Text",
+          "type": "array"
+        },
+        "psychological_mechanism": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Psychological Mechanism",
+          "type": "array"
+        },
+        "score": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Score",
+          "type": "integer"
+        },
+        "score_justification": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Score Justification",
+          "type": "array"
+        },
+        "spoken_text": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Spoken Text",
+          "type": "array"
+        },
+        "visual": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Visual",
+          "type": "array"
+        }
+      },
+      "required": [
+        "spoken_text",
+        "on_screen_text",
+        "visual",
+        "hook_type",
+        "hook_type_other",
+        "hook_type_justification",
+        "psychological_mechanism",
+        "alignment",
+        "alignment_explanation",
+        "score",
+        "score_justification"
+      ],
+      "title": "Hook",
+      "type": "object"
+    },
+    "OpenLoop": {
+      "properties": {
+        "closed": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Closed",
+          "type": "array"
+        },
+        "opened": {
+          "$ref": "#/$defs/Claim"
+        }
+      },
+      "required": [
+        "opened",
+        "closed"
+      ],
+      "title": "OpenLoop",
+      "type": "object"
+    },
+    "PerformanceContext": {
+      "properties": {
+        "interpretation": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Interpretation",
+          "type": "array"
+        },
+        "video_kind": {
+          "enum": [
+            "utility",
+            "entertainment",
+            "debate",
+            "mixed",
+            "unknown"
+          ],
+          "title": "Video Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "video_kind",
+        "interpretation"
+      ],
+      "title": "PerformanceContext",
+      "type": "object"
+    },
+    "Retention": {
+      "properties": {
+        "drop_risks": {
+          "items": {
+            "$ref": "#/$defs/DropRisk"
+          },
+          "title": "Drop Risks",
+          "type": "array"
+        },
+        "ending_effect": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Ending Effect",
+          "type": "array"
+        },
+        "ending_type": {
+          "enum": [
+            "replay_loop",
+            "payoff",
+            "cta",
+            "abrupt",
+            "mixed"
+          ],
+          "title": "Ending Type",
+          "type": "string"
+        },
+        "open_loops": {
+          "items": {
+            "$ref": "#/$defs/OpenLoop"
+          },
+          "title": "Open Loops",
+          "type": "array"
+        },
+        "rehooks": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Rehooks",
+          "type": "array"
+        },
+        "rhythm": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Rhythm",
+          "type": "array"
+        }
+      },
+      "required": [
+        "open_loops",
+        "rehooks",
+        "drop_risks",
+        "rhythm",
+        "ending_type",
+        "ending_effect"
+      ],
+      "title": "Retention",
+      "type": "object"
+    },
+    "ShareTrigger": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "trigger": {
+          "enum": [
+            "thats_so_you",
+            "utility",
+            "status",
+            "outrage",
+            "other"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trigger",
+        "claim"
+      ],
+      "title": "ShareTrigger",
+      "type": "object"
+    },
+    "Structure": {
+      "properties": {
+        "beats": {
+          "items": {
+            "$ref": "#/$defs/Beat"
+          },
+          "title": "Beats",
+          "type": "array"
+        },
+        "framework": {
+          "enum": [
+            "pas",
+            "before_after",
+            "list",
+            "story_loop",
+            "tutorial",
+            "myth_busting",
+            "demonstration",
+            "hybrid"
+          ],
+          "title": "Framework",
+          "type": "string"
+        },
+        "framework_justification": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Framework Justification",
+          "type": "array"
+        }
+      },
+      "required": [
+        "beats",
+        "framework",
+        "framework_justification"
+      ],
+      "title": "Structure",
+      "type": "object"
+    },
+    "Transferability": {
+      "properties": {
+        "creator_elements": {
+          "items": {
+            "$ref": "#/$defs/CreatorElement"
+          },
+          "title": "Creator Elements",
+          "type": "array"
+        },
+        "format_elements": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "title": "Format Elements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "format_elements",
+        "creator_elements"
+      ],
+      "title": "Transferability",
+      "type": "object"
+    },
+    "Verdict": {
+      "properties": {
+        "reasons": {
+          "items": {
+            "$ref": "#/$defs/VerdictReason"
+          },
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reasons"
+      ],
+      "title": "Verdict",
+      "type": "object"
+    },
+    "VerdictReason": {
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/Claim"
+        },
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "rank": {
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "weight_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Weight Percent",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rank",
+        "weight_percent",
+        "confidence",
+        "claim"
+      ],
+      "title": "VerdictReason",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "angle": {
+      "$ref": "#/$defs/Angle"
+    },
+    "emotion_curve": {
+      "items": {
+        "$ref": "#/$defs/EmotionPoint"
+      },
+      "title": "Emotion Curve",
+      "type": "array"
+    },
+    "engagement": {
+      "$ref": "#/$defs/Engagement"
+    },
+    "hook": {
+      "$ref": "#/$defs/Hook"
+    },
+    "performance_context": {
+      "$ref": "#/$defs/PerformanceContext"
+    },
+    "retention": {
+      "$ref": "#/$defs/Retention"
+    },
+    "structure": {
+      "$ref": "#/$defs/Structure"
+    },
+    "transferability": {
+      "$ref": "#/$defs/Transferability"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "hook",
+    "angle",
+    "structure",
+    "retention",
+    "engagement",
+    "emotion_curve",
+    "transferability",
+    "verdict",
+    "performance_context"
+  ],
+  "title": "ViralAnalysis",
+  "type": "object"
+}
