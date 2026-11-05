@@ -90,8 +90,15 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
   Il laisse `[À VÉRIFIER : ...]`, et `to_verify` remonte tout en tête du script.
 - **Leçons :** une leçon écarte un pattern avec une preuve `{"pattern_id": 3, "effect": "avoid"}` dans
   `evidence`. Le texte de toute leçon active va dans les prompts. `learning` doit respecter ce format.
-- **`predicted_score` :** formule non calibrée (60 % note du hook, 40 % moyenne Beta des patterns),
-  à recalibrer avec `learning`.
+- **`predicted_score` :** formule non calibrée (60 % note du hook, 40 % moyenne Beta des patterns).
+  `/learning/report` mesure sa précision, mais rien ne la recalibre encore automatiquement.
+- **Scores (`app/learning/`) :** les `alpha`/`beta` et `pattern_scores` sont toujours reconstruits
+  depuis les relevés par `rebuild_pattern_scores`, jamais incrémentés à la main. Une vidéo ne vote
+  qu'une fois, à son horizon le plus long. Une stat manquante n'est jamais comptée à 0.
+- **Baseline :** elle suit le créateur. Refaire le même niveau devient neutre, le score absolu d'un
+  pattern gagnant plafonne donc. C'est l'écart entre patterns qui compte, pas la valeur absolue.
+- **Leçons :** elles sont désactivées, jamais supprimées. Une leçon sans vidéo réelle à l'appui est
+  écartée, et écarter un pattern exige au moins 3 résultats.
 - **Noms de champs Pydantic :** éviter ceux de `BaseModel`, comme `register`. Ils deviennent
   silencieusement optionnels.
 - **Timeline :** `timeline.json` est le contrat avec le module d'analyse. Incrémenter
@@ -121,6 +128,10 @@ uv run cm niche topics <id> [--refresh] [--limit 50]   # Banque de sujets
 uv run cm niche voice <id> [--force]                   # Voix depuis mes vidéos
 uv run cm adapt <video_id> --niche <id> [-n 3]         # Adapter une vidéo analysée
 uv run cm ideas --niche <id> [-n 5] [--develop 3]      # n idées, les meilleures en scripts
+uv run cm stats <script_id>                            # Saisir les stats d'une vidéo publiée
+uv run cm stats-import <csv> --horizon 72 [--preset tiktok] [--map Colonne=champ]
+uv run cm learn [--force]                              # Post-mortems manquants et leçons
+uv run cm report [--niche <id>]                        # Rapport de suivi
 uv run cm worker                                       # Traiter la file sans lancer l'API
 uv run ruff format .; uv run ruff check .              # Formatage et lint
 uv run alembic revision --autogenerate -m "message"    # Créer une migration
@@ -148,10 +159,14 @@ API des scripts (synchrone, plusieurs minutes) : `POST /scripts/adapt`, `POST /s
 `GET /scripts` (`niche_id`, `status`, `limit`), `PATCH /scripts/{id}` (`status`, `content`,
 `published_video_id`). Les scripts sont aussi écrits dans `data/scripts/script_<id>.md`.
 
+API de l'apprentissage : `POST /scripts/{id}/performance`, `POST /performance/import`,
+`GET /learning/report` (`niche_id`), et le formulaire `GET /forms/performance`.
+
 Variables d'environnement (`.env`, voir `.env.example`) : `ANTHROPIC_API_KEY`, `MODEL_ANALYSIS`,
 `MODEL_GENERATION`, `DATA_DIR`, `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`,
 `SCENE_THRESHOLD`, `VISION_BATCH_SIZE`, `MAX_VIDEO_DURATION_S`, `INGEST_WORKER_ENABLED`,
-`EMBEDDING_MODEL`, `PATTERN_MERGE_THRESHOLD`.
+`EMBEDDING_MODEL`, `PATTERN_MERGE_THRESHOLD`, `LEARNING_HALF_LIFE_DAYS`, `LEARNING_MIN_BASELINE`,
+`LEARNING_EXPLORATION_RATE`.
 
 Prérequis système : ffmpeg et ffprobe dans le PATH.
 
@@ -159,7 +174,7 @@ Prérequis système : ffmpeg et ffprobe dans le PATH.
 
 À mettre à jour à la fin de chaque prompt.
 
-**Dernière mise à jour : 2026-11-05, module de génération.**
+**Dernière mise à jour : 2026-11-05, module d'apprentissage.**
 
 Fait :
 - Fondations : arborescence, configuration, modèles SQLAlchemy, migration `0001`, wrapper Claude
@@ -183,6 +198,9 @@ Fait :
 - `app/generate/` : `adapt` (squelette, transposition, écriture) et `generate` (Thompson sampling,
   idées, scripts), critique par un viewer impatient avec 2 réécritures au plus, garde-fous, rendu
   markdown, API et `cm adapt`, `cm ideas`. Migration `0006`.
+- `app/learning/` : saisie des stats (API, formulaire, CLI, CSV), score normalisé, mise à jour des
+  patterns avec decay, scores par niche, post-mortems, leçons tous les 5 résultats, rapport,
+  exploration à 20 %. Migration `0007`.
 
 À surveiller :
 - `PATTERN_MERGE_THRESHOLD=0.70`, abaissé depuis 0,85 après mesure sur 6 fiches de test : une vraie
@@ -208,8 +226,8 @@ Validé en conditions réelles pour la génération, sur la vraie niche 1 :
 - Le hook plafonne à 7/10 sur les trois scripts après 2 réécritures. Le critique réclame surtout le
   « comment » : `creator_facts` est le principal levier de qualité. Il manque encore la plateforme,
   le ciblage et le message des pubs, le budget de départ et l'histoire du premier client.
-- `script_3` est le premier écrit avec `creator_facts`. `script_1` et `script_2` sont périmés : ils
-  enseignent une méthode (porte-à-porte, voisins) qui n'est pas celle du créateur.
+- `script_4` est le plus à jour (pubs Facebook, 25$ par jour). `script_1` et `script_2` sont périmés :
+  ils enseignent une méthode (porte-à-porte, voisins) qui n'est pas celle du créateur.
 - `creator_facts` n'est pas demandé par l'entrevue : il se remplit par `PATCH /niches/{id}`.
 
 Validé en conditions réelles pour la niche, avec un créateur fictif sur une base temporaire :
@@ -217,6 +235,12 @@ Validé en conditions réelles pour la niche, avec un créateur fictif sur une b
   0,45 $ pour une entrevue de 14 réponses, environ 6 s d'attente par question.
 
 Non vérifié en conditions réelles :
+- Toute la boucle d'apprentissage sur de vraies stats : aucune vraie vidéo publiée à ce jour. Elle est
+  validée par une simulation de 30 vidéos. Les prompts ont tourné pour de vrai sur une copie de la
+  base, avec des stats fictives : post-mortem bon et prudent (0,10 $), synthèse à 0,04 $ qui a refusé
+  de conclure sur 2 résultats. Une synthèse produisant de vraies leçons n'a donc jamais été observée.
+- Import CSV : les préréglages `tiktok`, `meta` et `youtube` s'appuient sur des libellés courants,
+  jamais comparés à de vrais exports. `--map` permet de corriger.
 - Voix sur de vraies vidéos personnelles, via le déclenchement automatique après l'ingestion. Sans
   `voice_profile`, les scripts ne sont pas calés sur la vraie façon de parler du créateur, et la
   durée vient du débit de la vidéo source (`adapt`) ou d'un défaut de 3 mots/s (`generate`).
@@ -232,7 +256,9 @@ Non vérifié en conditions réelles :
 - Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
-- Modules `learning`, `agent` et `web/`.
+- Module `agent` et dashboard `web/` (seul le formulaire de stats existe).
+- Crédit des patterns : chaque pattern d'une vidéo reçoit le même mérite, et `adapt` en déclare
+  souvent beaucoup. L'effet d'un pattern seul reste donc difficile à isoler.
 - `POST /videos/{id}/analyze` et `POST /scripts/*` sont synchrones et prennent plusieurs minutes. À
   passer en tâche de fond pour le dashboard.
 

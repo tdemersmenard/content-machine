@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Mesuré : une reformulation française du même pattern donne environ 0,73.
     pattern_merge_threshold: float = 0.70
 
+    learning_half_life_days: float = 90.0  # Un résultat pèse moitié moins après cette durée.
+    learning_min_baseline: int = 3  # Relevés précédents requis pour calculer un score.
+    learning_exploration_rate: float = 0.2
+
     @field_validator("anthropic_api_key", mode="before")
     @classmethod
     def _blank_key_is_none(cls, value: object) -> object:

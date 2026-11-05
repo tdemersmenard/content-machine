@@ -950,7 +950,7 @@ def test_cli_errors(db: Session, niche, monkeypatch: pytest.MonkeyPatch) -> None
         ),
         ("script_write", {"brief": "{}"}),
         ("script_rewrite", {"brief": "{}", "script": "{}", "critique": "{}"}),
-        ("script_critic", {"avatar": "{}", "script": "{}"}),
+        ("script_critic", {"avatar": "{}", "script": "{}", "lessons": "[]"}),
         (
             "script_ideas",
             {

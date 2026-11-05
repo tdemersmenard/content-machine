@@ -9,7 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import Niche, Pattern, PatternType, Performance, Script, Video, VideoPattern
+from app.db.models import (
+    Niche,
+    Pattern,
+    PatternScore,
+    PatternType,
+    Performance,
+    Script,
+    Video,
+    VideoPattern,
+)
 from app.patterns.embeddings import Embedder, embed_texts, from_bytes
 from app.patterns.schemas import PatternDetail, PatternOut, PatternSearchHit, PatternVideoOut
 
@@ -17,6 +26,12 @@ from app.patterns.schemas import PatternDetail, PatternOut, PatternSearchHit, Pa
 def score_mean(pattern: Pattern) -> float:
     """Moyenne de la loi Beta. Vaut 0,5 tant que la boucle d'apprentissage n'a rien mesuré."""
     return pattern.score_alpha / (pattern.score_alpha + pattern.score_beta)
+
+
+def niche_scores(session: Session, niche_id: int) -> dict[int, tuple[float, float]]:
+    """(alpha, beta) mesurés dans une niche. Un pattern absent garde son score global."""
+    rows = session.scalars(select(PatternScore).where(PatternScore.niche_id == niche_id))
+    return {item.pattern_id: (item.score_alpha, item.score_beta) for item in rows}
 
 
 def _fields(pattern: Pattern) -> dict:
@@ -98,18 +113,26 @@ def top_patterns(
 ) -> list[Pattern]:
     """Classement par moyenne de la Beta, puis par nombre d'exemples.
 
-    Le score reste global : `niche_id` filtre les patterns, il n'y a pas encore de score par niche.
+    Avec `niche_id`, les patterns sont filtrés et classés selon leur score dans cette niche.
     """
     statement = select(Pattern)
     if type is not None:
         statement = statement.where(Pattern.type == type.value)
     patterns = list(session.scalars(statement))
 
+    scores: dict[int, tuple[float, float]] = {}
     if niche_id is not None:
         allowed = _niche_pattern_ids(session, niche_id)
         patterns = [item for item in patterns if item.id in allowed]
+        scores = niche_scores(session, niche_id)
 
-    patterns.sort(key=lambda item: (-score_mean(item), -len(item.examples), item.id))
+    def mean_for(item: Pattern) -> float:
+        if item.id in scores:
+            alpha, beta = scores[item.id]
+            return alpha / (alpha + beta)
+        return score_mean(item)
+
+    patterns.sort(key=lambda item: (-mean_for(item), -len(item.examples), item.id))
     return patterns[:limit]
 
 

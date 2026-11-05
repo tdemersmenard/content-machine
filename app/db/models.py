@@ -307,7 +307,9 @@ class Performance(Base):
 
     __tablename__ = "performance"
     __table_args__ = (
-        UniqueConstraint("video_id", "measured_at", name="uq_performance_video_id_measured_at"),
+        UniqueConstraint(
+            "video_id", "horizon_h", "measured_at", name="uq_performance_video_horizon_measured"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -317,7 +319,10 @@ class Performance(Base):
     video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), index=True)
     measured_at: Mapped[datetime] = mapped_column(UTCDateTime)
     hours_since_post: Mapped[float | None] = mapped_column(Float)
+    # Horizon du relevé (24, 72 ou 168 h) : on ne compare que des relevés au même horizon.
+    horizon_h: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
     views: Mapped[int | None] = mapped_column(BigInteger)
+    likes: Mapped[int | None] = mapped_column(BigInteger)
     avg_watch_time_s: Mapped[float | None] = mapped_column(Float)
     retention_3s: Mapped[float | None] = mapped_column(Float)
     retention_50: Mapped[float | None] = mapped_column(Float)
@@ -327,6 +332,53 @@ class Performance(Base):
     comments: Mapped[int | None] = mapped_column(BigInteger)
     follows: Mapped[int | None] = mapped_column(BigInteger)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Calculés par app/learning/scoring.py. Vides tant qu'il n'y a pas assez d'historique.
+    indexes: Mapped[dict[str, float] | None] = mapped_column(JSON)
+    composite: Mapped[float | None] = mapped_column(Float)
+    label: Mapped[str | None] = mapped_column(String(16))
+    baseline_size: Mapped[int | None] = mapped_column(Integer)
+
+
+class PatternScore(Base):
+    """Score d'un pattern dans une niche. Le score global reste sur la table patterns."""
+
+    __tablename__ = "pattern_scores"
+
+    pattern_id: Mapped[int] = mapped_column(
+        ForeignKey("patterns.id", ondelete="CASCADE"), primary_key=True
+    )
+    niche_id: Mapped[int] = mapped_column(
+        ForeignKey("niches.id", ondelete="CASCADE"), primary_key=True
+    )
+    score_alpha: Mapped[float] = mapped_column(Float, default=1.0)
+    score_beta: Mapped[float] = mapped_column(Float, default=1.0)
+
+
+class PostMortem(Base):
+    __tablename__ = "post_mortems"
+    __table_args__ = (
+        UniqueConstraint("script_id", "horizon_h", name="uq_post_mortems_script_id_horizon_h"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    script_id: Mapped[int] = mapped_column(ForeignKey("scripts.id", ondelete="CASCADE"), index=True)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"))
+    horizon_h: Mapped[int] = mapped_column(Integer)
+    prompt_version: Mapped[str] = mapped_column(String(64))
+    content: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class SynthesisRun(Base):
+    """Trace de chaque réécriture des leçons, pour savoir quand relancer la suivante."""
+
+    __tablename__ = "synthesis_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    niche_id: Mapped[int] = mapped_column(ForeignKey("niches.id", ondelete="CASCADE"), index=True)
+    results_count: Mapped[int] = mapped_column(Integer)
+    prompt_version: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class Lesson(Base):
@@ -347,6 +399,8 @@ class Lesson(Base):
     evidence: Mapped[list[Any]] = mapped_column(JSON, default=list)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     active: Mapped[bool] = mapped_column(default=True)
+    deactivated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    deactivated_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

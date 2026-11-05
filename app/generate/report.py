@@ -32,6 +32,8 @@ def render_script(content: ScriptContent) -> str:
         f"**Score prédit :** {c.predicted_score.value:.0f}/100 "
         f"(hook {c.predicted_score.hook_score}/10, non calibré)",
     ]
+    if c.experiment:
+        lines += ["", "**TEST :** ce script essaie des patterns peu testés, pour apprendre."]
     if c.to_verify:
         lines += ["", f"**À vérifier avant de tourner :** {', '.join(c.to_verify)}"]
 

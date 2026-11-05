@@ -111,6 +111,8 @@ class VoiceProfile(BaseModel):
 class NicheProfile(ProfileDraft):
     # Faits vécus confirmés par le créateur : la seule matière pour parler en son nom.
     creator_facts: list[str] = []
+    # Poids du score composite, par métrique. Remplace ceux dérivés de l'objectif.
+    score_weights: dict[str, float] = {}
     voice_profile: VoiceProfile | None = None
 
 

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saisie des stats</title>
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --line: #ccc; --accent: #0b5; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161616; --fg: #eee; --line: #444; } }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif;
+         max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin-top: .8rem; font-size: .9rem; }
+  input, select, textarea { width: 100%; box-sizing: border-box; padding: .5rem; margin-top: .2rem;
+         background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+  button { margin-top: 1.2rem; padding: .6rem 1.2rem; border: 0; border-radius: 4px;
+         background: var(--accent); color: #fff; font-size: 1rem; cursor: pointer; }
+  pre { white-space: pre-wrap; background: rgba(127,127,127,.12); padding: .8rem; border-radius: 4px; }
+  small { opacity: .7; }
+</style>
+</head>
+<body>
+<h1>Saisie des stats</h1>
+<p><small>Laisse vide ce que tu ne connais pas. Les rétentions s'écrivent en pourcentage.</small></p>
+<form id="form">
+  <label>Id du script <input name="script_id" type="number" min="1" required></label>
+  <label>Horizon
+    <select name="horizon_h">
+      <option value="24">24 h</option><option value="72" selected>72 h</option><option value="168">7 jours</option>
+    </select>
+  </label>
+  <label>Lien de la vidéo <input name="video_url" type="url"></label>
+  <label>Vues <input name="views" type="number" min="0"></label>
+  <label>Likes <input name="likes" type="number" min="0"></label>
+  <label>Rétention à 3 s (%) <input name="retention_3s" type="number" min="0" max="100" step="any"></label>
+  <label>Rétention à 50 % (%) <input name="retention_50" type="number" min="0" max="100" step="any"></label>
+  <label>Taux de complétion (%) <input name="completion_rate" type="number" min="0" max="100" step="any"></label>
+  <label>Temps de visionnage moyen (s) <input name="avg_watch_time_s" type="number" min="0" step="any"></label>
+  <label>Partages <input name="shares" type="number" min="0"></label>
+  <label>Sauvegardes <input name="saves" type="number" min="0"></label>
+  <label>Commentaires <input name="comments" type="number" min="0"></label>
+  <label>Abonnés gagnés <input name="follows" type="number" min="0"></label>
+  <label>Notes <textarea name="notes" rows="2"></textarea></label>
+  <button type="submit">Enregistrer</button>
+</form>
+<pre id="result" hidden></pre>
+<script>
+const RATES = ["retention_3s", "retention_50", "completion_rate"];
+const TEXTS = ["video_url", "notes"];
+document.getElementById("form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const result = document.getElementById("result");
+  const values = Object.fromEntries(new FormData(event.target));
+  const scriptId = values.script_id;
+  delete values.script_id;
+  const body = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value === "") continue;
+    if (TEXTS.includes(key)) body[key] = value;
+    else body[key] = RATES.includes(key) ? Number(value) / 100 : Number(value);
+  }
+  result.hidden = false;
+  result.textContent = "Enregistrement...";
+  const response = await fetch(`/scripts/${scriptId}/performance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  result.textContent = JSON.stringify(await response.json(), null, 2);
+});
+</script>
+</body>
+</html>

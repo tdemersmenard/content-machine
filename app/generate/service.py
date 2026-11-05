@@ -11,7 +11,7 @@ from typing import Any, Self
 import anthropic
 import numpy as np
 from pydantic import model_validator
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -22,6 +22,7 @@ from app.db.models import (
     Niche,
     Pattern,
     PatternType,
+    Performance,
     Script,
     ScriptStatus,
     Transcript,
@@ -54,7 +55,7 @@ from app.niche.profile import deep_merge, load_profile
 from app.niche.schemas import NicheProfile
 from app.niche.topics import set_topic_status
 from app.niche.voice import contains_phrase
-from app.patterns.search import score_mean
+from app.patterns.search import niche_scores, score_mean
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class Brief:
     words_per_second: float
     duration_source: str
     source_video_id: int | None = None
+    experiment: bool = False
 
 
 def _model() -> str:
@@ -187,15 +189,16 @@ def _predict(hook_score: int, patterns: list[Pattern]) -> PredictedScore:
     )
 
 
-def _critique(claude: ClaudeClient, draft: ScriptDraft, profile: NicheProfile) -> Critique:
+def _critique(claude: ClaudeClient, draft: ScriptDraft, brief: Brief) -> Critique:
     critique = claude.call_json(
         prompt="script_critic",
         version="v1",
         schema=Critique,
         model=_model(),
         variables={
-            "avatar": profile.avatar.model_dump_json(),
+            "avatar": brief.profile.avatar.model_dump_json(),
             "script": draft.model_dump_json(),
+            "lessons": json.dumps(brief.content.get("lessons", []), ensure_ascii=False),
         },
         effort="medium",
     ).data
@@ -238,7 +241,7 @@ def _polish(
     claude: ClaudeClient, brief: Brief, draft: ScriptDraft
 ) -> tuple[ScriptDraft, Critique, list[Critique]]:
     """Réécrit tant que le hook est sous 8, 2 fois au plus, et garde la meilleure version."""
-    critique = _critique(claude, draft, brief.profile)
+    critique = _critique(claude, draft, brief)
     critiques = [critique]
     best, best_critique = draft, critique
 
@@ -250,7 +253,7 @@ def _polish(
         except ClaudeError as exc:
             logger.warning("Réécriture abandonnée, la version précédente reste : %s", exc)
             break
-        candidate_critique = _critique(claude, candidate, brief.profile)
+        candidate_critique = _critique(claude, candidate, brief)
         critiques.append(candidate_critique)
         if candidate_critique.hook_score >= best_critique.hook_score:
             best, best_critique = candidate, candidate_critique
@@ -275,6 +278,7 @@ def _produce(session: Session, claude: ClaudeClient, brief: Brief) -> Script:
     content = ScriptContent(
         **ScriptDraft.model_validate(draft.model_dump()).model_dump(),
         mode=brief.mode,
+        experiment=brief.experiment,
         topic_ids=brief.topic_ids,
         estimated_duration_s=duration,
         words_per_second=brief.words_per_second,
@@ -446,22 +450,49 @@ def adapt(
     return _produce_all(session, claude, briefs)
 
 
-def thompson_combination(patterns: list[Pattern], rng: np.random.Generator) -> list[Pattern]:
+def _by_type(patterns: list[Pattern]) -> list[list[Pattern]]:
+    grouped: dict[str, list[Pattern]] = defaultdict(list)
+    for item in patterns:
+        grouped[item.type].append(item)
+    return [grouped[kind.value] for kind in PatternType if grouped.get(kind.value)]
+
+
+def _beta(item: Pattern, scores: dict[int, tuple[float, float]] | None) -> tuple[float, float]:
+    return (scores or {}).get(item.id, (item.score_alpha, item.score_beta))
+
+
+def thompson_combination(
+    patterns: list[Pattern],
+    rng: np.random.Generator,
+    scores: dict[int, tuple[float, float]] | None = None,
+) -> list[Pattern]:
     """Tire une valeur dans la Beta de chaque pattern et garde le meilleur de chaque type.
 
-    Un pattern peu testé a une loi large : il garde ses chances d'être essayé.
+    Un pattern peu testé a une loi large : il garde ses chances d'être essayé. `scores` donne
+    les scores de la niche, qui remplacent le score global des patterns qui en ont un.
     """
-    by_type: dict[str, list[Pattern]] = defaultdict(list)
-    for item in patterns:
-        by_type[item.type].append(item)
-
     chosen = []
-    for kind in PatternType:
-        candidates = by_type.get(kind.value)
-        if candidates:
-            draws = [rng.beta(item.score_alpha, item.score_beta) for item in candidates]
-            chosen.append(candidates[int(np.argmax(draws))])
+    for candidates in _by_type(patterns):
+        draws = [rng.beta(*_beta(item, scores)) for item in candidates]
+        chosen.append(candidates[int(np.argmax(draws))])
     return chosen
+
+
+def exploration_combination(
+    patterns: list[Pattern],
+    rng: np.random.Generator,
+    scores: dict[int, tuple[float, float]] | None = None,
+) -> list[Pattern]:
+    """Le pattern le moins testé de chaque type, pour que la machine ne tourne pas en rond."""
+    return [
+        min(candidates, key=lambda item: (sum(_beta(item, scores)), rng.random()))
+        for candidates in _by_type(patterns)
+    ]
+
+
+def exploration_slots(count: int, rate: float, rng: np.random.Generator) -> int:
+    """Arrondi aléatoire : en moyenne `rate` des places, même sur de petits lots."""
+    return int(count * rate + rng.random())
 
 
 def _ideas_schema(count: int, combinations: int, topic_ids: set[str]) -> type[IdeaBatch]:
@@ -502,7 +533,14 @@ def generate(
 
     goal = objectif or profile.identity.goal_details or profile.identity.goal
     rng = np.random.default_rng(seed)
-    combinations = [thompson_combination(patterns, rng) for _ in range(n)]
+    scores = niche_scores(session, niche_id)
+    rate = get_settings().learning_exploration_rate
+    tests = exploration_slots(n, rate, rng)
+    combinations = [
+        *[thompson_combination(patterns, rng, scores) for _ in range(n - tests)],
+        *[exploration_combination(patterns, rng, scores) for _ in range(tests)],
+    ]
+    first_test = n - tests
 
     ideas = claude.call_json(
         prompt="script_ideas",
@@ -522,7 +560,11 @@ def generate(
         effort="high",
     ).data.ideas
 
-    best = sorted(ideas, key=lambda item: item.potential, reverse=True)[:develop]
+    ranked = sorted(ideas, key=lambda item: item.potential, reverse=True)
+    # Sans place réservée, une idée de test perdrait presque toujours face aux valeurs sûres.
+    reserved = [item for item in ranked if item.combination_index >= first_test]
+    reserved = reserved[: exploration_slots(develop, rate, rng)]
+    best = [*reserved, *[item for item in ranked if item not in reserved]][:develop]
     speed, speed_source = _voice_speed(profile, None)
     never_say = tuple(profile.voice.never_say)
 
@@ -544,6 +586,7 @@ def generate(
                 ),
                 words_per_second=speed,
                 duration_source=speed_source,
+                experiment=idea.combination_index >= first_test,
                 content={
                     "profile": profile.model_dump(mode="json"),
                     "idea": idea.model_dump(),
@@ -584,6 +627,12 @@ def update_script(
         if session.get(Video, published_video_id) is None:
             raise LookupError(f"Vidéo {published_video_id} inconnue.")
         script.published_video_id = published_video_id
+        # La vidéo réellement ingérée remplace sa fiche provisoire dans les relevés existants.
+        session.execute(
+            update(Performance)
+            .where(Performance.script_id == script.id)
+            .values(video_id=published_video_id)
+        )
 
     if status is not None:
         first_validation = script.status is ScriptStatus.DRAFT and status is not ScriptStatus.DRAFT

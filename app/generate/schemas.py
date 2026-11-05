@@ -138,6 +138,7 @@ class ScriptContent(ScriptDraft):
     """Contenu de scripts.content."""
 
     mode: Literal["adapt", "generate"]
+    experiment: bool = False  # Vrai si le script teste des patterns peu éprouvés.
     topic_ids: list[str]
     estimated_duration_s: float
     words_per_second: float

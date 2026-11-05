@@ -1,11 +1,14 @@
 """Commande `cm`."""
 
+import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import anthropic
 import typer
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +20,7 @@ from app.db.models import (
     NicheInterview,
     Pattern,
     PatternType,
+    Script,
     Video,
 )
 from app.db.session import get_session_factory
@@ -30,6 +34,11 @@ from app.generate.service import (
 )
 from app.ingest.jobs import Submission, Worker, canonical, drain, latest_job, run_job, submit
 from app.ingest.pipeline import IngestDeps, IngestError
+from app.learning.imports import ImportError_, import_csv, parse_count, parse_rate, parse_seconds
+from app.learning.lessons import maybe_synthesize
+from app.learning.report import build_report
+from app.learning.schemas import PerformanceInput
+from app.learning.service import record_performance, run_learning, scored_results
 from app.llm.client import ClaudeClient, get_claude
 from app.llm.errors import ClaudeError
 from app.niche.interview import (
@@ -376,6 +385,120 @@ def ideas_command(
         except (LookupError, GenerationError, ClaudeError, anthropic.APIError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(1) from exc
+
+
+def _ask(label: str, parse: Callable[[str], Any]) -> Any:
+    """Une question facultative : laisser vide veut dire « je ne sais pas »."""
+    while True:
+        raw = typer.prompt(label, default="", show_default=False)
+        if not raw.strip():
+            return None
+        try:
+            return parse(raw)
+        except ValueError:
+            typer.echo("Valeur illisible, recommence ou laisse vide.", err=True)
+
+
+@cli.command("stats")
+def stats_command(script_id: int) -> None:
+    """Saisit les stats d'une vidéo publiée, puis met à jour ce que la machine sait."""
+    with get_session_factory()() as session:
+        script = session.get(Script, script_id)
+        if script is None:
+            typer.echo("Script inconnu.", err=True)
+            raise typer.Exit(1)
+
+        typer.echo(f"Script {script.id} : {load_content(script).internal_title}")
+        typer.echo("Laisse vide ce que tu ne connais pas.")
+        horizon = typer.prompt("Horizon en heures (24, 72 ou 168)", type=int, default=72)
+        url = None
+        if script.published_video_id is None:
+            url = _ask("Lien de la vidéo", str.strip)
+
+        try:
+            data = PerformanceInput(
+                horizon_h=horizon,
+                video_url=url,
+                views=_ask("Vues", parse_count),
+                likes=_ask("Likes", parse_count),
+                retention_3s=_ask("Rétention à 3 s (%)", parse_rate),
+                retention_50=_ask("Rétention à 50 % (%)", parse_rate),
+                completion_rate=_ask("Taux de complétion (%)", parse_rate),
+                avg_watch_time_s=_ask("Temps de visionnage moyen (s)", parse_seconds),
+                shares=_ask("Partages", parse_count),
+                saves=_ask("Sauvegardes", parse_count),
+                comments=_ask("Commentaires", parse_count),
+                follows=_ask("Abonnés gagnés", parse_count),
+                notes=_ask("Notes", str.strip),
+            )
+        except ValidationError as exc:
+            typer.echo(f"Stats invalides : {exc}", err=True)
+            raise typer.Exit(1) from exc
+
+        result = record_performance(session, script, data, default_claude())
+        row = result.performance
+        if row.composite is None:
+            typer.echo("Enregistré. Pas encore de score : il manque de l'historique à cet horizon.")
+        else:
+            typer.echo(f"Score : {row.composite:.2f}x ta baseline ({row.label}).")
+        if result.post_mortem:
+            typer.echo(result.post_mortem.content["summary"])
+        if result.lessons_updated:
+            typer.echo("Leçons mises à jour.")
+        for warning in result.warnings:
+            typer.echo(warning, err=True)
+
+
+@cli.command("stats-import")
+def stats_import_command(
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="Fichier CSV.")],
+    horizon: Annotated[int, typer.Option("--horizon", help="24, 72 ou 168.")],
+    preset: Annotated[str | None, typer.Option("--preset", help="tiktok, meta ou youtube.")] = None,
+    mapping: Annotated[
+        list[str] | None, typer.Option("--map", help="Colonne=champ, par exemple Vues=views.")
+    ] = None,
+) -> None:
+    """Importe un export CSV, puis lance cm learn pour les post-mortems."""
+    columns = dict(item.split("=", 1) for item in mapping or [])
+    with get_session_factory()() as session:
+        try:
+            result = import_csv(
+                session, path.read_text(encoding="utf-8-sig"), horizon, preset, columns
+            )
+        except ImportError_ as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+    typer.echo(f"{result.imported} ligne(s) importée(s).")
+    for line in result.skipped:
+        typer.echo(line, err=True)
+
+
+@cli.command("learn")
+def learn_command(
+    force: Annotated[
+        bool, typer.Option("--force", help="Réécrit les leçons sans attendre.")
+    ] = False,
+) -> None:
+    """Rattrape les post-mortems manquants et met à jour les leçons si c'est le moment."""
+    claude = default_claude()
+    with get_session_factory()() as session:
+        for script, row in scored_results(session):
+            _, _, warnings = run_learning(session, script, row, claude)
+            for warning in warnings:
+                typer.echo(warning, err=True)
+        for niche in session.scalars(select(Niche).where(Niche.profile.is_not(None))).all():
+            if maybe_synthesize(session, niche, claude, force):
+                typer.echo(f"Leçons réécrites pour {niche.name}.")
+    typer.echo("Terminé.")
+
+
+@cli.command("report")
+def report_command(
+    niche: Annotated[int | None, typer.Option("--niche", help="Id de la niche.")] = None,
+) -> None:
+    """Affiche le rapport de suivi."""
+    with get_session_factory()() as session:
+        typer.echo(json.dumps(build_report(session, niche), ensure_ascii=False, indent=2))
 
 
 @cli.command("status")
