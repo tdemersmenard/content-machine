@@ -279,6 +279,9 @@ Validé en conditions réelles pour la niche, avec un créateur fictif sur une b
 - Entrevue, profil et banque de sujets en québécois. La voix sur la transcription de keo_fdb.
   0,45 $ pour une entrevue de 14 réponses, environ 6 s d'attente par question.
 
+Validé en conditions réelles sur une vraie vidéo du créateur (34 s, `data/inbox/mine/`) : ingestion,
+analyse, 6 patterns et voix extraite automatiquement, 1,27 $ sans retry. La vidéo ne vient d'aucun script.
+
 Validé en conditions réelles pour l'agent, sur une copie de la base (environ 1,60 $ au total) :
 - `cm chat` sans le terminal : `get_performance` sans stats (réponse honnête, 0,05 $), `top_patterns`, un
   script par `generate` (1,20 $, 128 000 tokens). Outils, thinking, cache et historique relu sans thinking
@@ -291,8 +294,7 @@ Validé en conditions réelles pour l'agent, sur une copie de la base (environ 1
 Non vérifié en conditions réelles :
 - Plan complet de 5 scripts : seuls les idées et 1 script ont tourné pour de vrai. Le coût de 6 $ et les
   30 minutes sont extrapolés.
-- Dossier surveillé et `ingest` par l'agent avec de vraies vidéos : testés avec un vrai fichier et ffmpeg,
-  mais sans vrai Claude ni Whisper. « Voici 5 liens » n'a jamais tourné pour de vrai (environ 8 $).
+- `ingest` par l'agent et « voici 5 liens » n'ont jamais tourné pour de vrai (environ 8 $).
 - Cron à l'heure réelle : le planificateur n'a tourné que quelques secondes, le lundi 7 h n'a pas été
   attendu. Les routines ne tournent que si l'API tourne.
 - Toute la boucle d'apprentissage sur de vraies stats : aucune vraie vidéo publiée à ce jour. Elle est
@@ -301,9 +303,8 @@ Non vérifié en conditions réelles :
   de conclure sur 2 résultats. Une synthèse produisant de vraies leçons n'a donc jamais été observée.
 - Import CSV : les préréglages `tiktok`, `meta` et `youtube` s'appuient sur des libellés courants,
   jamais comparés à de vrais exports. `--map` permet de corriger.
-- Voix sur de vraies vidéos personnelles, via le déclenchement automatique après l'ingestion. Sans
-  `voice_profile`, les scripts ne sont pas calés sur la vraie façon de parler du créateur, et la
-  durée vient du débit de la vidéo source (`adapt`) ou d'un défaut de 3 mots/s (`generate`).
+- Voix sur plusieurs vidéos : `voice_profile` ne repose que sur une vidéo de 34 s. Whisper `small` déforme
+  le québécois (« t'amapporter », « n'abardones ») : un tic comme « tu vas te » peut être un artefact.
 - Thompson sampling sur de vraies données : tous les scores valent 0,5 et la bibliothèque compte
   8 patterns tirés d'une seule vidéo, donc le tirage est encore presque aléatoire.
 - Le critique et l'auteur sont le même modèle : sa note n'est pas une mesure indépendante.
@@ -316,6 +317,8 @@ Non vérifié en conditions réelles :
 - Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
+- Stats d'une vidéo sans script : `Performance` passe par un script, donc les vidéos déjà publiées par le
+  créateur ne peuvent ni être notées ni servir de baseline.
 - Dashboard `web/` : seul le formulaire de stats existe. Les notifications sont lisibles par l'API et
   par `cm notifications` en attendant.
 - Crédit des patterns : chaque pattern d'une vidéo reçoit le même mérite, et `adapt` en déclare
