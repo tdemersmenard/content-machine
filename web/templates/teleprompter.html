@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Téléprompteur</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    body { background: #000; color: #fff; }
+    #text { font-size: var(--size, 3rem); line-height: 1.35; font-weight: 600; }
+    #text.mirror { transform: scaleX(-1); }
+    #text mark { background: #854d0e; color: #fff; }
+    #guide { top: 33%; }
+  </style>
+</head>
+<body>
+  <div id="guide" class="pointer-events-none fixed inset-x-0 h-px bg-white/30"></div>
+  <main id="text" class="mx-auto max-w-4xl px-5 pt-[33dvh] pb-[100dvh]">
+    <p class="mb-8">{{ c.hooks[0].spoken|verify }}</p>
+    {% for beat in c.beats %}<p class="mb-8">{{ beat.spoken|verify }}</p>{% endfor %}
+  </main>
+  <div class="fixed inset-x-0 bottom-0 flex flex-wrap items-center justify-center gap-2 bg-black/80 p-2 pb-[max(.5rem,env(safe-area-inset-bottom))] text-white">
+    <a class="btn" href="/ui/studio?ids={{ script.id }}">Fermer</a>
+    <button id="play" class="btn btn-primary">Lancer</button>
+    <button class="btn" data-speed="-0.1" aria-label="Plus lent">Lent</button>
+    <span id="speed" class="min-w-12 text-center text-sm">100 %</span>
+    <button class="btn" data-speed="0.1" aria-label="Plus vite">Vite</button>
+    <button class="btn" data-size="-0.4" aria-label="Texte plus petit">A-</button>
+    <button class="btn" data-size="0.4" aria-label="Texte plus gros">A+</button>
+    <button id="mirror" class="btn">Miroir</button>
+  </div>
+  <script>
+    // La vitesse de base lit tout le texte dans la durée estimée du script.
+    const duration = {{ c.estimated_duration_s }};
+    const text = document.getElementById("text");
+    let speed = 1, size = window.innerWidth < 640 ? 2.2 : 3, running = false, last = 0, position = 0;
+    text.style.setProperty("--size", `${size}rem`);
+    const distance = () => text.scrollHeight - window.innerHeight;
+    const step = (now) => {
+      if (!running) return;
+      position += ((now - last) / 1000) * (distance() / duration) * speed;
+      last = now;
+      window.scrollTo(0, position);
+      if (position >= distance()) { toggle(); return; }
+      requestAnimationFrame(step);
+    };
+    const button = document.getElementById("play");
+    const toggle = () => {
+      running = !running;
+      button.textContent = running ? "Pause" : "Lancer";
+      position = window.scrollY;
+      last = performance.now();
+      if (running) requestAnimationFrame(step);
+    };
+    button.addEventListener("click", toggle);
+    document.addEventListener("keydown", (event) => {
+      if (event.code === "Space") { event.preventDefault(); toggle(); }
+    });
+    document.querySelectorAll("[data-speed]").forEach((item) => item.addEventListener("click", () => {
+      speed = Math.max(0.3, Math.min(2.5, speed + Number(item.dataset.speed)));
+      document.getElementById("speed").textContent = `${Math.round(speed * 100)} %`;
+    }));
+    document.querySelectorAll("[data-size]").forEach((item) => item.addEventListener("click", () => {
+      size = Math.max(1.2, size + Number(item.dataset.size));
+      text.style.setProperty("--size", `${size}rem`);
+    }));
+    document.getElementById("mirror").addEventListener("click", () => text.classList.toggle("mirror"));
+  </script>
+</body>
+</html>

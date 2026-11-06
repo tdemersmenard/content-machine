@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Chat{% endblock %}
+{% block content %}
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+  <h1>Chat</h1>
+  <div class="flex items-center gap-2">
+    {% if sessions %}
+    <select class="w-auto text-sm" aria-label="Conversations" onchange="location.href = this.value">
+      <option value="/ui/chat">Nouvelle conversation</option>
+      {% for item in sessions %}
+      <option value="/ui/chat?session={{ item.id }}" {{ "selected" if item.id == session_id }}>Session {{ item.id }}, {{ item.updated_at.strftime("%d/%m %H:%M") }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+  </div>
+</div>
+
+<div id="log" class="mx-auto max-w-3xl space-y-3">
+  {% if not messages %}
+  <p class="card text-muted">Demande-lui par exemple : « Fais-moi 3 scripts pour cette semaine » ou « Pourquoi ma dernière vidéo a floppé ? ». Les scripts coûtent environ 1,20 $ chacun, il te le dira avant.</p>
+  {% endif %}
+  {% for message in messages %}
+  {% if message.role == "user" %}
+  <p class="ml-auto w-fit max-w-[85%] rounded-xl bg-accent px-3 py-2 text-on-accent">{{ message.text }}</p>
+  {% elif message.role == "tools" %}
+  <p class="flex flex-wrap gap-1">{% for tool in message.tools %}<span class="badge badge-idle">{{ tool }}</span>{% endfor %}</p>
+  {% else %}
+  <div class="card prose-lite">
+    {{ message.text|markdown }}
+    {% if message.unverified %}<p class="text-sm text-bad">Références introuvables en base : {{ message.unverified|join(", ") }}. Ne te fie pas à ce passage.</p>{% endif %}
+  </div>
+  {% endif %}
+  {% endfor %}
+  <div id="pending"></div>
+</div>
+
+<form class="sticky bottom-16 mx-auto mt-4 flex max-w-3xl gap-2 md:bottom-4" hx-post="/ui/chat" hx-target="#pending" hx-on::after-request="if (event.detail.successful) this.reset()">
+  {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}">{% endif %}
+  <textarea name="message" rows="2" required placeholder="Ton message" aria-label="Ton message"
+    onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.form.requestSubmit(); }"></textarea>
+  <button class="btn btn-primary self-end">Envoyer</button>
+</form>
+<script>window.scrollTo(0, document.body.scrollHeight);</script>
+{% endblock %}

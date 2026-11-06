@@ -1,0 +1,6 @@
+{% set label = row.reading.label if row.reading else none %}
+{% if label %}
+<span class="badge {{ {'winner': 'badge-good', 'loser': 'badge-bad'}.get(label, 'badge-idle') }}">{{ LABELS.get(label, label) }} {{ "%.2f"|format(row.reading.composite) }}x</span>
+{% elif row.reading %}
+<span class="badge badge-idle">Pas de score</span>
+{% endif %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Vidéo {{ video.id }}{% endblock %}
+{% block content %}
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+  <h1>Vidéo {{ video.id }}{% if video.creator %} · {{ video.creator }}{% endif %}</h1>
+  {% if analysis %}<a class="btn btn-primary" href="/ui/studio?video={{ video.id }}">Adapter dans le Studio</a>{% endif %}
+</div>
+
+<div class="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+  <div class="lg:sticky lg:top-5 lg:self-start">
+    <video id="player" class="mx-auto max-h-[70dvh] w-full rounded-xl bg-black" controls playsinline preload="metadata" src="/ui/media/{{ video.id }}"></video>
+    <p id="video-error" class="mt-2 hidden text-sm text-bad">La vidéo ne peut pas être lue. La première lecture la convertit, ce qui peut prendre une minute : recharge la page.</p>
+    {% if moments %}
+    <div class="relative mt-3 h-7 rounded bg-raised" role="group" aria-label="Timeline de la vidéo">
+      <div id="progress" class="absolute inset-y-0 left-0 rounded bg-accent/20"></div>
+      {% for moment in moments %}
+      <button type="button" class="absolute top-0 h-7 w-2.5 -translate-x-1/2 cursor-pointer" style="left: {{ moment.percent }}%" data-seek="{{ moment.start }}" title="{{ moment.clock }} {{ moment.label }}" aria-label="{{ moment.clock }} {{ moment.label }}">
+        <span class="mx-auto block h-full w-0.5 {{ 'bg-bad' if moment.kind == 'risk' else 'bg-accent' }}"></span>
+      </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="min-w-0 space-y-5">
+    {% if not analysis %}
+    <p class="card text-muted">Pas encore d'analyse pour cette vidéo.</p>
+    {% else %}
+    {% if video.views is none %}
+    <p class="card text-sm text-muted">Aucune stat connue pour cette vidéo : l'analyse décrit son potentiel, pas un succès mesuré.</p>
+    {% endif %}
+
+    <section>
+      <h2 class="mb-2">Pourquoi ça a marché</h2>
+      <ol class="space-y-2">
+        {% for reason in reasons %}
+        <li class="card">
+          <p>{{ reason.claim.statement }}</p>
+          <p class="mt-1 text-sm text-muted">{{ reason.weight_percent }} % estimé, confiance {{ {"low": "faible", "medium": "moyenne", "high": "élevée"}[reason.confidence] }}</p>
+          <p class="mt-2 flex flex-wrap gap-1">
+            {% for proof in reason.claim.evidence %}
+            <button type="button" class="seek" data-seek="{{ proof.start_s }}">{{ proof.start_s|clock }}</button>
+            {% endfor %}
+          </p>
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
+
+    <section>
+      <h2 class="mb-2">Patterns détectés</h2>
+      <p class="flex flex-wrap gap-2">
+        {% for pattern in patterns %}
+        <a class="badge badge-busy" href="/ui/patterns#pattern-{{ pattern.id }}">{{ pattern.name }}</a>
+        {% else %}<span class="text-muted">Aucun.</span>{% endfor %}
+      </p>
+    </section>
+
+    <section>
+      <h2 class="mb-2">Timeline</h2>
+      <ul class="space-y-2">
+        {% for moment in moments %}
+        <li>
+          <button type="button" class="moment card w-full cursor-pointer py-2 text-left" data-seek="{{ moment.start }}" data-end="{{ moment.end }}">
+            <span class="font-mono text-xs text-accent">{{ moment.clock }}</span>
+            <span class="badge {{ 'badge-bad' if moment.kind == 'risk' else 'badge-idle' }}">{{ moment.label }}</span>
+            <span class="mt-1 block text-sm">{{ moment.text }}</span>
+          </button>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <details class="card">
+      <summary class="cursor-pointer font-medium">Rapport complet</summary>
+      <div class="prose-lite mt-3">{{ report }}</div>
+    </details>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  const player = document.getElementById("player");
+  const moments = [...document.querySelectorAll(".moment")];
+  const progress = document.getElementById("progress");
+  const seek = (seconds) => {
+    player.currentTime = seconds;
+    player.play().catch(() => {});
+    player.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  document.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-seek]");
+    if (target) seek(Number(target.dataset.seek));
+  });
+  player.addEventListener("timeupdate", () => {
+    const now = player.currentTime;
+    if (progress && player.duration) progress.style.width = `${(now / player.duration) * 100}%`;
+    for (const item of moments) {
+      const inside = now >= Number(item.dataset.seek) && now < Number(item.dataset.end);
+      item.classList.toggle("moment-active", inside);
+    }
+  });
+  player.addEventListener("error", () => document.getElementById("video-error").classList.remove("hidden"));
+  const start = new URLSearchParams(location.search).get("t");
+  if (start) player.addEventListener("loadedmetadata", () => { player.currentTime = Number(start); }, { once: true });
+</script>
+{% endblock %}

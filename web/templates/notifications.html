@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Alertes{% endblock %}
+{% block content %}
+<h1 class="mb-4">Alertes</h1>
+{% if not rows %}<p class="card text-muted">Aucune alerte.</p>{% endif %}
+<ul class="space-y-2">
+  {% for row in rows %}
+  <li class="card {{ 'opacity-60' if row.read_at }}">
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <p class="min-w-0 font-medium">{{ row.title }}</p>
+      {% if not row.read_at %}
+      <form method="post" action="/ui/notifications/{{ row.id }}/read"><button class="btn">Lu</button></form>
+      {% endif %}
+    </div>
+    {% if row.kind == "weekly_report" %}
+    <a class="text-sm" href="/ui/brain">Lire le rapport</a>
+    {% else %}
+    <p class="mt-1 text-sm text-muted">{{ row.body }}</p>
+    {% endif %}
+    {% if row.script_id %}<a class="btn mt-2" href="/ui/results/{{ row.script_id }}">Entrer les stats</a>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}

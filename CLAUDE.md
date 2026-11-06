@@ -24,7 +24,8 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
 | `app/db/` | Base déclarative, session, modèles SQLAlchemy |
 | `app/llm/` | Wrapper Claude, chargement des prompts, tarifs |
 | `app/prompts/` | Tous les prompts envoyés à Claude |
-| `web/` | Dashboard |
+| `app/web/` | Pages du dashboard, tâches de fond, sécurité |
+| `web/` | Gabarits Jinja2 (`templates/`) et CSS, JS (`static/`) du dashboard |
 | `data/` | Vidéos, frames, exports, base SQLite (gitignore) |
 | `tests/` | Tests pytest |
 
@@ -116,6 +117,14 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
 - **Idées répétées (`app/generate/novelty.py`) :** `generate` et `adapt` comparent `core_idea`, l'idée
   nue en une phrase neutre, jamais l'angle : l'angle reprend le gabarit du hook et le filtre compare
   alors le style. Toute nouvelle façon de produire une idée doit remplir `core_idea`.
+- **Dashboard (`app/web/`, `web/`) :** HTMX servi par FastAPI, sans Node. Les pages sont sous `/ui`. Tout
+  ce qui appelle Claude passe par `runner.start` : une page ne bloque jamais. `web/static/app.css` est
+  généré et commité : après un changement de gabarit, relancer la commande Tailwind ci-dessous.
+- **Sécurité du dashboard :** il peut dépenser sur la clé API. Toute écriture venue d'un autre site est
+  refusée. `cm dev --lan` exige `DASHBOARD_PASSWORD`. Sortie de Claude ou texte de vidéo : jamais de
+  `|safe`, passer par `render_markdown` (`html=False`).
+- **Vidéos :** TikTok et les iPhone livrent du HEVC. `playable_path` crée `preview.mp4` en H.264 à la
+  première lecture. Les timestamps ne changent pas.
 - **Noms de champs Pydantic :** éviter ceux de `BaseModel`, comme `register`. Ils deviennent
   silencieusement optionnels.
 - **Timeline :** `timeline.json` est le contrat avec le module d'analyse. Incrémenter
@@ -124,6 +133,7 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
 ## Commandes
 
 ```powershell
+uv run cm dev [--lan] [--port 8000]                    # Tout lancer : migrations, API, worker, routines, dashboard
 uv sync                                                # Installer les dépendances
 uv run alembic upgrade head                            # Appliquer les migrations
 uv run uvicorn app.main:app --reload                   # Lancer l'API (http://127.0.0.1:8000)
@@ -155,6 +165,7 @@ uv run cm notifications [--all]                        # Lire les notifications
 uv run cm actions [--limit 20]                         # Budget du jour et journal de l'agent
 uv run cm routine <daily|weekly|reminders|inbox> [--force]  # Lancer une routine à la main
 uv run cm worker                                       # Traiter la file sans lancer l'API
+uv run tailwindcss -i web/static/input.css -o web/static/app.css --minify  # Regénérer le CSS
 uv run ruff format .; uv run ruff check .              # Formatage et lint
 uv run alembic revision --autogenerate -m "message"    # Créer une migration
 uv run alembic check                                   # Vérifier modèles et migrations
@@ -188,6 +199,10 @@ API de l'agent : `POST /agent/chat` (`niche_id`, `message`, `session_id` pour re
 journal montre l'avancement), `GET /agent/sessions/{id}`, `GET /agent/actions`, `GET /agent/budget`,
 `GET /agent/notifications` (`unread`), `POST /agent/notifications/{id}/read`, `GET /agent/reports`.
 
+Dashboard : `http://127.0.0.1:8000` (Inbox, Vidéo, Patterns, Studio, Résultats, Cerveau, Chat, Alertes). Pour
+le téléphone, même Wi-Fi : `DASHBOARD_PASSWORD` dans `.env`, puis `uv run cm dev --lan`, qui affiche l'adresse.
+Pas de `make` ni de Docker : ils ne sont pas installés, et `cm dev` fait le même travail.
+
 Dossier surveillé : `data/inbox/` pour les vidéos des autres, `data/inbox/mine/` pour les miennes. Une
 vidéo déposée est ingérée et analysée quand l'API tourne (ou avec `cm routine inbox`), puis rangée dans
 `done/` ou `failed/`. Les rapports du lundi sont aussi écrits dans `data/reports/`.
@@ -198,7 +213,7 @@ Variables d'environnement (`.env`, voir `.env.example`) : `ANTHROPIC_API_KEY`, `
 `EMBEDDING_MODEL`, `PATTERN_MERGE_THRESHOLD`, `LEARNING_HALF_LIFE_DAYS`, `LEARNING_MIN_BASELINE`,
 `LEARNING_EXPLORATION_RATE`, `IDEA_SIMILARITY_THRESHOLD`, `MODEL_AGENT`, `AGENT_SCHEDULER_ENABLED`,
 `AGENT_TIMEZONE`, `AGENT_DAILY_TOKEN_BUDGET`, `AGENT_MAX_TOOL_ROUNDS`, `AGENT_DAILY_HOUR`,
-`AGENT_WEEKLY_HOUR`, `AGENT_WEEKLY_SCRIPTS`, `AGENT_INBOX_INTERVAL_S`.
+`AGENT_WEEKLY_HOUR`, `AGENT_WEEKLY_SCRIPTS`, `AGENT_INBOX_INTERVAL_S`, `DASHBOARD_PASSWORD`.
 
 Prérequis système : ffmpeg et ffprobe dans le PATH.
 
@@ -206,7 +221,7 @@ Prérequis système : ffmpeg et ffprobe dans le PATH.
 
 À mettre à jour à la fin de chaque prompt.
 
-**Dernière mise à jour : 2026-11-06, module agent.**
+**Dernière mise à jour : 2026-11-06, dashboard.**
 
 Fait :
 - Fondations : arborescence, configuration, modèles SQLAlchemy, migration `0001`, wrapper Claude
@@ -236,6 +251,8 @@ Fait :
 - `app/agent/` : boucle d'outils (11 outils), `cm chat`, `/agent/chat`, mémoire de session, citations
   vérifiées, budget de tokens, journal, notifications, routines APScheduler (quotidien, rappels à 24 h,
   72 h et 7 jours, rapport et plan du lundi, dossier surveillé), `cm publish`. Migration `0008`.
+- `web/` : dashboard HTMX, 7 pages et les alertes, tâches de fond, lecteur synchronisé, édition inline,
+  téléprompteur, export PDF par l'impression du navigateur, `cm dev`.
 - Plus de répétition d'idées : `core_idea`, `script_ideas/v2`, `script_transpose/v2`.
 
 À surveiller :
@@ -279,6 +296,10 @@ Validé en conditions réelles pour la niche, avec un créateur fictif sur une b
 - Entrevue, profil et banque de sujets en québécois. La voix sur la transcription de keo_fdb.
   0,45 $ pour une entrevue de 14 réponses, environ 6 s d'attente par question.
 
+Validé dans un vrai navigateur (Edge headless, vrai `uvicorn`, copie des données) :
+- Aucun débordement à 390 px sur 11 pages. Vidéo HEVC convertie en 1,8 s et lue, saut au bon moment au
+  clic, filtre des patterns, édition inline, défilement du téléprompteur, chat avec le vrai Claude.
+
 Validé en conditions réelles sur une vraie vidéo du créateur (34 s, `data/inbox/mine/`) : ingestion,
 analyse, 6 patterns et voix extraite automatiquement, 1,27 $ sans retry. La vidéo ne vient d'aucun script.
 
@@ -292,6 +313,8 @@ Validé en conditions réelles pour l'agent, sur une copie de la base (environ 1
   (`TestClient`), pas avec un vrai `uvicorn`.
 
 Non vérifié en conditions réelles :
+- Dashboard sur un vrai téléphone, `cm dev --lan` à travers le pare-feu Windows, et le vrai glisser-déposer
+  (l'envoi de fichiers est testé, pas le geste). Un Studio complet à 3 variantes n'a pas tourné par la page.
 - Plan complet de 5 scripts : seuls les idées et 1 script ont tourné pour de vrai. Le coût de 6 $ et les
   30 minutes sont extrapolés.
 - `ingest` par l'agent et « voici 5 liens » n'ont jamais tourné pour de vrai (environ 8 $).
@@ -319,12 +342,10 @@ Non vérifié en conditions réelles :
 Pas encore fait :
 - Stats d'une vidéo sans script : `Performance` passe par un script, donc les vidéos déjà publiées par le
   créateur ne peuvent ni être notées ni servir de baseline.
-- Dashboard `web/` : seul le formulaire de stats existe. Les notifications sont lisibles par l'API et
-  par `cm notifications` en attendant.
 - Crédit des patterns : chaque pattern d'une vidéo reçoit le même mérite, et `adapt` en déclare
   souvent beaucoup. L'effet d'un pattern seul reste donc difficile à isoler.
-- `POST /videos/{id}/analyze` et `POST /scripts/*` sont synchrones et prennent plusieurs minutes. À
-  passer en tâche de fond pour le dashboard.
+- `POST /videos/{id}/analyze` et `POST /scripts/*` restent synchrones dans l'API. Le dashboard, lui, passe
+  par des tâches de fond, en mémoire : un redémarrage perd l'affichage de l'avancement, pas le travail.
 
 Décisions :
 - Ingestion de vidéos de tiers via yt-dlp validée pour un usage local. À réexaminer si l'outil
@@ -332,5 +353,5 @@ Décisions :
 
 - Embeddings locaux avec sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`).
 
-Décisions à prendre :
-- Stack du dashboard `web/`.
+- Dashboard en HTMX servi par FastAPI, plutôt que Next.js : un seul serveur et une seule adresse pour le
+  téléphone, sans Node à installer. Choix du créateur, sur recommandation.

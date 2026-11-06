@@ -1,0 +1,13 @@
+<div {% if task.status == "running" %}hx-get="/ui/tasks/{{ task.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %} class="card" aria-live="polite">
+  {% if sent %}<p class="mb-2">{{ sent }}</p>{% endif %}
+  {% if task.status == "failed" %}
+  <p class="text-bad">Échec : {{ task.error }}</p>
+  {% elif task.status == "done" %}
+  <p class="text-good">Terminé.</p>
+  {% else %}
+  <p class="text-muted">{{ task.label }}…</p>
+  {% endif %}
+  {% if task.steps %}
+  <ul class="mt-2 space-y-1 text-sm text-muted">{% for step in task.steps %}<li>{{ step }}</li>{% endfor %}</ul>
+  {% endif %}
+</div>

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Résultats{% endblock %}
+{% block content %}
+<h1 class="mb-4">Résultats</h1>
+
+{% if ready %}
+<section class="mb-6">
+  <h2 class="mb-2">Prêts à publier</h2>
+  <p class="mb-2 text-sm text-muted">C'est toi qui publies. Marque le script une fois la vidéo en ligne : les rappels de stats partent de là.</p>
+  <ul class="space-y-2">
+    {% for row in ready %}
+    <li class="card flex flex-wrap items-center justify-between gap-2 py-3">
+      <span class="min-w-0 font-medium">{{ row.c.internal_title }}</span>
+      <form method="post" action="/ui/scripts/{{ row.script.id }}/publish"><button class="btn">C'est publié</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section>
+  <h2 class="mb-2">Mes vidéos publiées</h2>
+  {% if not published %}
+  <p class="card text-muted">Aucune vidéo publiée depuis un script. Approuve un script dans le Studio, publie-le, puis marque-le ici.</p>
+  {% endif %}
+  <ul class="space-y-2">
+    {% for row in published %}
+    <li>
+      <a class="card flex flex-wrap items-center justify-between gap-2 py-3 text-ink no-underline" href="/ui/results/{{ row.script.id }}">
+        <span class="min-w-0">
+          <span class="block font-medium">{{ row.c.internal_title }}</span>
+          <span class="text-sm text-muted">
+            {% if row.reading %}{{ row.reading.views if row.reading.views is not none else "?" }} vues à {{ row.reading.horizon_h }} h{% else %}Pas encore de stats{% endif %}
+          </span>
+        </span>
+        {% include "_label.html" %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

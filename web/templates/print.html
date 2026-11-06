@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ c.internal_title }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="bg-white text-black">
+  <div class="no-print flex gap-2 border-b border-line p-3">
+    <a class="btn" href="/ui/studio?ids={{ script.id }}">Retour</a>
+    <button class="btn btn-primary" onclick="window.print()">Enregistrer en PDF</button>
+    <a class="btn" href="/ui/scripts/{{ script.id }}/markdown">Markdown</a>
+  </div>
+  <main class="mx-auto max-w-2xl space-y-4 p-6 text-base leading-relaxed">
+    <h1>{{ c.internal_title }}</h1>
+    <p>{{ c.estimated_duration_s|round|int }} s. {{ c.angle }}</p>
+    {% if c.to_verify %}<p><strong>À vérifier :</strong> {{ c.to_verify|join(", ") }}</p>{% endif %}
+    <section class="break-inside-avoid">
+      <h2>Hook</h2>
+      <p>{{ c.hooks[0].spoken|verify }}</p>
+      {% if c.hooks[0].on_screen_text %}<p class="text-sm">Écran : {{ c.hooks[0].on_screen_text }}</p>{% endif %}
+    </section>
+    {% for beat in c.beats %}
+    <section class="break-inside-avoid">
+      <h2>{{ ROLES[beat.role] }} <span class="text-sm font-normal">{{ beat.target_start_s|clock }}</span></h2>
+      <p>{{ beat.spoken|verify }}</p>
+      {% if beat.on_screen_text %}<p class="text-sm">Écran : {{ beat.on_screen_text }}</p>{% endif %}
+      <p class="text-sm">Jeu : {{ beat.performance_note }}</p>
+    </section>
+    {% endfor %}
+    <section class="break-inside-avoid">
+      <h2>Légende</h2>
+      <p>{{ c.caption }}</p>
+      <p class="text-sm">{% for tag in c.hashtags %}#{{ tag.lstrip("#") }} {% endfor %}</p>
+    </section>
+  </main>
+</body>
+</html>

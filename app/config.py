@@ -48,7 +48,9 @@ class Settings(BaseSettings):
     agent_weekly_scripts: int = 5  # 0 désactive le plan de contenu de la semaine.
     agent_inbox_interval_s: int = 60
 
-    @field_validator("anthropic_api_key", mode="before")
+    dashboard_password: SecretStr | None = None  # Obligatoire pour ouvrir au réseau local.
+
+    @field_validator("anthropic_api_key", "dashboard_password", mode="before")
     @classmethod
     def _blank_key_is_none(cls, value: object) -> object:
         return None if value == "" else value

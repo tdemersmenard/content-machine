@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ c.internal_title }}{% endblock %}
+{% block content %}
+<a class="text-sm" href="/ui/results">Résultats</a>
+<h1 class="mt-1 mb-4">{{ c.internal_title }}</h1>
+{% if error %}<p class="mb-3 text-sm text-bad">{{ error }}</p>{% endif %}
+
+<div class="grid gap-5 lg:grid-cols-2">
+  <form method="post" class="card space-y-3">
+    <h2>Saisir les stats</h2>
+    <p class="text-sm text-muted">Laisse vide ce que tu ne connais pas.</p>
+    <fieldset class="flex gap-3">
+      <legend class="sr-only">Horizon</legend>
+      {% for value, label in [(24, "24 h"), (72, "72 h"), (168, "7 jours")] %}
+      <label class="flex items-center gap-1 text-ink"><input type="radio" name="horizon_h" value="{{ value }}" {{ "checked" if value == 72 }}> {{ label }}</label>
+      {% endfor %}
+    </fieldset>
+    <div class="grid grid-cols-2 gap-3">
+      {% for name, label in [("views", "Vues"), ("likes", "Likes"), ("shares", "Partages"), ("saves", "Sauvegardes"), ("comments", "Commentaires"), ("follows", "Abonnés gagnés")] %}
+      <label>{{ label }} <input name="{{ name }}" inputmode="numeric" autocomplete="off"></label>
+      {% endfor %}
+      {% for name, label in [("retention_3s", "Rétention 3 s (%)"), ("retention_50", "Rétention 50 % (%)"), ("completion_rate", "Complétion (%)")] %}
+      <label>{{ label }} <input name="{{ name }}" inputmode="decimal" autocomplete="off"></label>
+      {% endfor %}
+      <label>Visionnage moyen (s) <input name="avg_watch_time_s" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    {% if script.published_video_id is none %}
+    <label>Vidéo ingérée
+      <select name="published_video_id">
+        <option value="">Pas encore ingérée</option>
+        {% for video in own_videos %}<option value="{{ video.id }}">Vidéo {{ video.id }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Lien <input name="video_url" type="url" autocomplete="off"></label>
+    {% endif %}
+    <label>Notes <textarea name="notes" rows="2"></textarea></label>
+    <button class="btn btn-primary w-full">Enregistrer</button>
+  </form>
+
+  <div class="min-w-0 space-y-5">
+    <section>
+      <h2 class="mb-2">Relevés</h2>
+      {% for reading in readings %}
+      <div class="card mb-2 flex flex-wrap items-center justify-between gap-2 py-3">
+        <span>{{ reading.horizon_h }} h : {{ reading.views if reading.views is not none else "?" }} vues</span>
+        {% with row={"reading": reading} %}{% include "_label.html" %}{% endwith %}
+      </div>
+      {% else %}
+      <p class="card text-muted">Aucun relevé.</p>
+      {% endfor %}
+      {% if readings and readings|selectattr("composite", "none")|list %}
+      <p class="text-sm text-muted">Pas de score sans 3 relevés précédents au même horizon.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2 class="mb-2">Post-mortem</h2>
+      {% if learning %}
+      <p class="card text-muted">Diagnostic en cours…</p>
+      <script>setTimeout(() => location.reload(), 8000);</script>
+      {% endif %}
+      {% for item in post_mortems %}
+      {% set pm = item.content %}
+      <article class="card space-y-3">
+        <p class="text-sm text-muted">À {{ item.horizon_h }} h</p>
+        <p class="font-medium">{{ pm.summary }}</p>
+        <div>
+          <h3 class="text-sm font-semibold">Causes probables</h3>
+          <ul class="mt-1 space-y-2 text-sm">
+            {% for cause in pm.causes %}
+            <li>
+              <span class="font-medium">{{ cause.weight_percent }} %</span> {{ cause.explanation }}
+              <span class="block text-muted">{{ cause.evidence }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div><h3 class="text-sm font-semibold">À garder</h3><ul class="mt-1 list-disc pl-4 text-sm">{% for line in pm.keep %}<li>{{ line }}</li>{% endfor %}</ul></div>
+          <div><h3 class="text-sm font-semibold">À changer</h3><ul class="mt-1 list-disc pl-4 text-sm">{% for line in pm.change %}<li>{{ line }}</li>{% endfor %}</ul></div>
+        </div>
+        <details class="text-sm"><summary class="cursor-pointer text-muted">Script contre tournage, et prédiction</summary>
+          <p class="mt-2">{{ pm.script_vs_actual }}</p><p class="mt-2">{{ pm.prediction_review }}</p>
+        </details>
+      </article>
+      {% else %}
+      {% if not learning %}<p class="card text-muted">Il arrive à partir de 72 h, une fois le relevé noté.</p>{% endif %}
+      {% endfor %}
+    </section>
+  </div>
+</div>
+{% endblock %}

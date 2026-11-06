@@ -1,0 +1,50 @@
+<article id="script-{{ script.id }}" class="card w-[85vw] max-w-md shrink-0 snap-center space-y-3 lg:w-auto lg:max-w-none">
+  <header>
+    <p class="flex flex-wrap items-center gap-2 text-xs text-muted">
+      Script {{ script.id }}
+      <span class="badge {{ 'badge-good' if script.status.value != 'draft' else 'badge-idle' }}">{{ STATUS_LABELS[script.status.value] }}</span>
+      {% if c.experiment %}<span class="badge badge-warn">Exploration</span>{% endif %}
+    </p>
+    <h2 class="mt-1">{{ c.internal_title }}</h2>
+    <p class="mt-1 text-sm text-muted">{{ c.angle }}</p>
+  </header>
+
+  {% include "_script_meta.html" %}
+
+  <section>
+    <h3 class="mb-1 text-sm font-semibold">Hook</h3>
+    <ul class="space-y-1">
+      {% for hook in c.hooks %}
+      <li class="rounded-lg border border-line p-2 text-sm {{ 'border-accent' if loop.first }}">
+        <p>{{ hook.spoken|verify }}</p>
+        <p class="mt-1 flex items-center justify-between gap-2 text-xs text-muted">
+          {{ HOOK_TYPES[hook.hook_type] }}
+          {% if loop.first %}<span class="text-accent">Retenu</span>{% else %}
+          <button class="cursor-pointer text-accent underline" hx-post="/ui/scripts/{{ script.id }}/hook/{{ loop.index0 }}" hx-target="#script-{{ script.id }}" hx-swap="outerHTML">Choisir</button>
+          {% endif %}
+        </p>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="space-y-2">
+    <h3 class="text-sm font-semibold">Script</h3>
+    {% for beat in c.beats %}
+    <label>
+      <span class="flex justify-between text-xs">{{ ROLES[beat.role] }} <span class="font-mono">{{ beat.target_start_s|clock }}</span></span>
+      <textarea class="mt-1 text-sm" rows="5" name="spoken" required
+        hx-post="/ui/scripts/{{ script.id }}/beats/{{ loop.index0 }}" hx-trigger="change"
+        hx-target="#meta-{{ script.id }}" hx-swap="outerHTML">{{ beat.spoken }}</textarea>
+    </label>
+    {% endfor %}
+  </section>
+
+  <footer class="flex flex-wrap gap-2">
+    {% if script.status.value == "draft" %}
+    <button class="btn btn-primary" hx-post="/ui/scripts/{{ script.id }}/approve" hx-target="#script-{{ script.id }}" hx-swap="outerHTML">Approuver</button>
+    {% endif %}
+    <a class="btn" href="/ui/scripts/{{ script.id }}/teleprompter">Téléprompteur</a>
+    <a class="btn" href="/ui/scripts/{{ script.id }}/print">PDF</a>
+  </footer>
+</article>

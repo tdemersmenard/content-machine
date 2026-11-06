@@ -2,6 +2,7 @@
 
 import json
 import logging
+import socket
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,14 +10,25 @@ from typing import Annotated, Any
 
 import anthropic
 import typer
+import uvicorn
+from alembic.config import Config
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alembic import command
 from app.agent.budget import budget_status
 from app.agent.chat import AgentError, Step, chat, start_session
-from app.agent.routines import Inbox, Services, run_daily, run_reminders, run_weekly
+from app.agent.routines import (
+    Inbox,
+    Services,
+    run_daily,
+    run_reminders,
+    run_weekly,
+    weekly_due,
+)
 from app.analysis.service import AnalysisError, analyze, pending_video_ids, report_path
+from app.config import get_settings
 from app.db.base import utcnow
 from app.db.models import (
     AgentAction,
@@ -660,6 +672,47 @@ def status_command(video_id: int) -> None:
         stage = f", étape {job.stage}" if job and job.stage else ""
         error = f"\n{job.error}" if job and job.error else ""
         typer.echo(f"Vidéo {video.id} : {status}{stage}{error}")
+
+
+@cli.command("dev")
+def dev_command(
+    lan: Annotated[
+        bool, typer.Option("--lan", help="Ouvre au réseau local, pour le téléphone.")
+    ] = False,
+    port: Annotated[int, typer.Option("--port", help="Port.")] = 8000,
+) -> None:
+    """Lance tout d'un coup : migrations, API, worker, routines et dashboard."""
+    settings = get_settings()
+    if lan and settings.dashboard_password is None:
+        typer.echo("--lan exige DASHBOARD_PASSWORD dans le fichier .env.", err=True)
+        raise typer.Exit(1)
+
+    command.upgrade(Config("alembic.ini"), "head")
+    with get_session_factory()() as session:
+        pending = [item.name for item in _weekly_due(session)]
+    if pending and settings.agent_scheduler_enabled and settings.agent_weekly_scripts > 0:
+        typer.echo(
+            f"Attention : le plan de la semaine n'a pas été fait. Il va partir dans 30 s "
+            f"({settings.agent_weekly_scripts} scripts, environ 1,20 $ chacun). "
+            "AGENT_WEEKLY_SCRIPTS=0 dans .env pour l'éviter.",
+            err=True,
+        )
+    typer.echo(f"Dashboard : http://127.0.0.1:{port}")
+    if lan:
+        typer.echo(f"Téléphone : http://{_lan_address()}:{port}")
+    uvicorn.run("app.main:app", host="0.0.0.0" if lan else "127.0.0.1", port=port)
+
+
+def _weekly_due(session: Session) -> list[Niche]:
+    niches = session.scalars(select(Niche).where(Niche.profile.is_not(None))).all()
+    return [item for item in niches if weekly_due(session, item)]
+
+
+def _lan_address() -> str:
+    """L'adresse que le routeur voit. Aucun paquet n'est envoyé avec UDP sans données."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(("10.255.255.255", 1))
+        return probe.getsockname()[0]
 
 
 @cli.command("worker")

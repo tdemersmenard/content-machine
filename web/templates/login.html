@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connexion</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="grid min-h-dvh place-items-center p-4">
+  <form method="post" action="/ui/login" class="card w-full max-w-sm space-y-3">
+    <h1>ContentMachine</h1>
+    {% if error %}<p class="text-sm text-bad">{{ error }}</p>{% endif %}
+    <label>Mot de passe <input type="password" name="password" autofocus required></label>
+    <button class="btn btn-primary w-full">Entrer</button>
+  </form>
+</body>
+</html>

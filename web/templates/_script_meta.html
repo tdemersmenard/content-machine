@@ -1,0 +1,9 @@
+<div id="meta-{{ script.id }}" class="text-sm">
+  <p class="text-muted">{{ c.estimated_duration_s|round|int }} s à {{ "%.1f"|format(c.words_per_second) }} mots/s · hook {{ c.final_critique.hook_score }}/10</p>
+  {% if c.to_verify %}
+  <div class="mt-2 rounded-lg border border-warn/40 p-2">
+    <p class="font-medium text-warn">À vérifier avant de tourner</p>
+    <ul class="mt-1 list-disc pl-4">{% for item in c.to_verify %}<li>{{ item }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+</div>

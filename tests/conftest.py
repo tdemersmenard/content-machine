@@ -48,6 +48,7 @@ def isolated_env(
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("AGENT_SCHEDULER_ENABLED", "false")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "")
     monkeypatch.setattr("app.generate.novelty.embed_texts", distinct_vectors)
     clear_caches()
     yield

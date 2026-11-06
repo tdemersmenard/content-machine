@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Cerveau{% endblock %}
+{% block content %}
+<h1 class="mb-4">Cerveau</h1>
+
+<div class="grid gap-3 sm:grid-cols-3">
+  <div class="card"><p class="text-sm text-muted">Vidéos notées</p><p class="text-2xl font-semibold">{{ report.scored_videos }}</p></div>
+  <div class="card"><p class="text-sm text-muted">Winners / losers</p><p class="text-2xl font-semibold">{{ report.labels.get("winner", 0) }} / {{ report.labels.get("loser", 0) }}</p></div>
+  <div class="card">
+    <p class="text-sm text-muted">Précision des prédictions</p>
+    {% if report.prediction.direction_accuracy is not none %}
+    <p class="text-2xl font-semibold">{{ (report.prediction.direction_accuracy * 100)|round|int }} %</p>
+    <p class="text-xs text-muted">Sur {{ report.prediction.sample }} vidéos. 50 % équivaut au hasard.</p>
+    {% else %}
+    <p class="mt-1 text-sm">Il faut 3 vidéos notées.</p>
+    {% endif %}
+  </div>
+</div>
+
+<section class="mt-6">
+  <h2 class="mb-1">Score composite dans le temps</h2>
+  <p class="mb-2 text-sm text-muted">1,0 = ta baseline. Elle monte avec toi : rester à 1,0 veut dire tenir ton niveau.</p>
+  {% if chart %}
+  <div class="card relative">
+    <svg id="chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" class="w-full" role="img" aria-label="Score composite de chaque vidéo notée, du {{ chart.first_date }} au {{ chart.last_date }}">
+      {% for tick in chart.ticks %}
+      <line x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ tick.y }}" y2="{{ tick.y }}" stroke="var(--line)" stroke-width="1"/>
+      <text x="{{ chart.left - 6 }}" y="{{ tick.y + 4 }}" text-anchor="end" font-size="11" fill="var(--muted)">{{ "%.1f"|format(tick.value) }}</text>
+      {% endfor %}
+      <line x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ chart.baseline_y }}" y2="{{ chart.baseline_y }}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 4"/>
+      <polyline points="{{ chart.line }}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      {% for point in chart.points %}
+      <circle cx="{{ point.x }}" cy="{{ point.y }}" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+      <circle class="hit" cx="{{ point.x }}" cy="{{ point.y }}" r="14" fill="transparent" tabindex="0" data-tip="{{ point.date }} · {{ point.title }} · {{ point.composite }}x"/>
+      {% endfor %}
+      <text x="{{ chart.left }}" y="{{ chart.height - 6 }}" font-size="11" fill="var(--muted)">{{ chart.first_date }}</text>
+      {% if chart.last_date != chart.first_date %}<text x="{{ chart.right }}" y="{{ chart.height - 6 }}" text-anchor="end" font-size="11" fill="var(--muted)">{{ chart.last_date }}</text>{% endif %}
+    </svg>
+    <p id="tip" class="min-h-5 text-sm text-muted" aria-live="polite">Survole ou touche un point.</p>
+    <details class="mt-2 text-sm">
+      <summary class="cursor-pointer text-muted">Voir le tableau</summary>
+      <table class="mt-2 w-full text-left">
+        <thead class="text-muted"><tr><th class="font-normal">Date</th><th class="font-normal">Script</th><th class="font-normal">Score</th></tr></thead>
+        <tbody>{% for point in chart.points %}<tr><td>{{ point.date }}</td><td><a href="/ui/results/{{ point.script_id }}">{{ point.title }}</a></td><td>{{ point.composite }}x</td></tr>{% endfor %}</tbody>
+      </table>
+    </details>
+  </div>
+  <script>
+    const tip = document.getElementById("tip");
+    document.querySelectorAll("#chart .hit").forEach((item) => {
+      for (const name of ["mouseenter", "focus", "click"]) {
+        item.addEventListener(name, () => { tip.textContent = item.dataset.tip; });
+      }
+    });
+  </script>
+  {% else %}
+  <p class="card text-muted">Pas encore de vidéo notée. Il faut 3 relevés au même horizon pour calculer une baseline.</p>
+  {% endif %}
+</section>
+
+<section class="mt-6">
+  <h2 class="mb-2">Leçons actives</h2>
+  {% if not lessons %}<p class="card text-muted">Aucune leçon : elles arrivent tous les 5 résultats, et seulement si les preuves tiennent.</p>{% endif %}
+  <ul class="space-y-2">
+    {% for lesson in lessons %}
+    <li id="lesson-{{ lesson.id }}" class="card scroll-mt-4 target:border-accent">
+      <p>{{ lesson.statement }}</p>
+      <p class="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
+        Confiance {{ (lesson.confidence * 100)|round|int }} %
+        {% for proof in lesson.evidence %}
+        {% if proof.video_id %}<a class="badge badge-busy" href="/ui/videos/{{ proof.video_id }}">Vidéo {{ proof.video_id }}</a>{% endif %}
+        {% if proof.pattern_id %}<a class="badge badge-bad" href="/ui/patterns#pattern-{{ proof.pattern_id }}">Écarte le pattern {{ proof.pattern_id }}</a>{% endif %}
+        {% endfor %}
+      </p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if retired %}
+  <details class="mt-2 text-sm"><summary class="cursor-pointer text-muted">Leçons retirées</summary>
+    <ul class="mt-2 space-y-1">{% for lesson in retired %}<li>{{ lesson.statement }} <span class="text-muted">({{ lesson.deactivated_reason }})</span></li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</section>
+
+<section class="mt-6 grid gap-4 md:grid-cols-2">
+  {% for title, rows, sign in [("Patterns en hausse", trends.rising, "+"), ("Patterns en baisse", trends.falling, "")] %}
+  <div>
+    <h2 class="mb-2">{{ title }}</h2>
+    {% if rows %}
+    <ul class="space-y-2">
+      {% for item in rows %}
+      <li class="card flex items-center justify-between gap-2 py-3">
+        <a class="min-w-0 no-underline" href="/ui/patterns#pattern-{{ item.id }}">{{ item.name }}</a>
+        <span class="shrink-0 text-sm text-muted">{{ sign }}{{ item.change }} pts sur {{ item.results }} vidéos</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="card text-muted">Il faut au moins 4 résultats par pattern.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+
+{% if weekly %}
+<section class="mt-6">
+  <h2 class="mb-2">Dernier rapport de la semaine</h2>
+  <div class="card prose-lite">{{ weekly.markdown|markdown }}</div>
+</section>
+{% endif %}
+{% endblock %}

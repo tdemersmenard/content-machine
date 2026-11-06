@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Inbox{% endblock %}
+{% block content %}
+<div class="mb-5 flex flex-wrap items-baseline justify-between gap-2">
+  <h1>Inbox</h1>
+  <p class="text-sm text-muted">Aujourd'hui : {{ "{:,}".format(budget.used).replace(",", " ") }} tokens sur {{ "{:,}".format(budget.limit).replace(",", " ") }}, {{ "%.2f"|format(budget.cost_usd) }} $</p>
+</div>
+
+<section class="grid gap-4 md:grid-cols-2">
+  <form id="drop" class="card flex min-h-40 cursor-pointer flex-col items-center justify-center gap-2 border-dashed text-center"
+        hx-post="/ui/inbox/files" hx-encoding="multipart/form-data" hx-target="#queue" hx-trigger="submit">
+    <p class="font-medium">Dépose tes vidéos ici</p>
+    <p class="text-sm text-muted">ou touche pour les choisir. Environ 1,70 $ par vidéo.</p>
+    <input id="files" class="hidden" type="file" name="files" accept="video/*" multiple>
+    <label class="flex items-center gap-2"><input type="checkbox" name="own" value="true"> Ce sont mes vidéos</label>
+  </form>
+
+  <form class="card space-y-3" hx-post="/ui/inbox/links" hx-target="#queue" hx-on::after-request="if (event.detail.successful) this.reset()">
+    <label>Liens, un par ligne
+      <textarea name="links" rows="3" required placeholder="https://www.tiktok.com/@..."></textarea>
+    </label>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <label class="flex items-center gap-2"><input type="checkbox" name="own" value="true"> Mes vidéos</label>
+      <button class="btn btn-primary">Analyser</button>
+    </div>
+  </form>
+</section>
+
+<section class="mt-6">
+  <h2 class="mb-2">File de traitement</h2>
+  <div id="queue" hx-get="/ui/inbox/queue" hx-trigger="every 3s">{% include "_queue.html" %}</div>
+</section>
+
+<script>
+  const drop = document.getElementById("drop");
+  const input = document.getElementById("files");
+  const send = () => { if (input.files.length) htmx.trigger(drop, "submit"); };
+  drop.addEventListener("click", (event) => {
+    if (!event.target.closest("label")) input.click();
+  });
+  input.addEventListener("change", send);
+  for (const name of ["dragenter", "dragover"]) {
+    drop.addEventListener(name, (event) => { event.preventDefault(); drop.classList.add("border-accent"); });
+  }
+  drop.addEventListener("dragleave", () => drop.classList.remove("border-accent"));
+  drop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    drop.classList.remove("border-accent");
+    input.files = event.dataTransfer.files;
+    send();
+  });
+  drop.addEventListener("htmx:afterRequest", () => { input.value = ""; });
+</script>
+{% endblock %}

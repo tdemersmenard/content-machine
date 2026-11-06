@@ -1,0 +1,22 @@
+{% if error %}<p class="mb-2 text-sm text-bad">{{ error }}</p>{% endif %}
+{% if not rows %}
+<p class="card text-muted">Rien dans la file. Dépose une vidéo ou colle un lien.</p>
+{% endif %}
+<ul class="space-y-2">
+  {% for row in rows %}
+  <li class="card flex flex-wrap items-center justify-between gap-2 py-3">
+    <div class="min-w-0">
+      <a class="font-medium no-underline" href="/ui/videos/{{ row.video.id }}">Vidéo {{ row.video.id }}{% if row.video.creator %} · {{ row.video.creator }}{% endif %}</a>
+      {% if row.video.is_own_content %}<span class="badge badge-idle">Ma vidéo</span>{% endif %}
+      <p class="truncate text-sm text-muted">{{ row.detail or row.video.description or row.video.source_url or "" }}</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="badge badge-{{ row.tone }}">{{ row.state }}</span>
+      {% if row.state == "À analyser" %}
+      <button class="btn" hx-post="/ui/videos/{{ row.video.id }}/analyze" hx-target="#queue">Analyser</button>
+      {% endif %}
+      {% if row.done %}<a class="btn" href="/ui/studio?video={{ row.video.id }}">Adapter</a>{% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
