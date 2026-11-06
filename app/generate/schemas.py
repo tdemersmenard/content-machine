@@ -43,6 +43,7 @@ class TransposedBeat(BaseModel):
 
 
 class Variant(BaseModel):
+    core_idea: str = Field(min_length=1)
     angle: str = Field(min_length=1)
     belief_attacked: str = Field(min_length=1)
     topic_ids: list[str]
@@ -56,6 +57,7 @@ class Transposition(BaseModel):
 class Idea(BaseModel):
     combination_index: int
     topic_id: str
+    core_idea: str = Field(min_length=1)
     angle: str = Field(min_length=1)
     belief_attacked: str = Field(min_length=1)
     why: str = Field(min_length=1)
@@ -139,6 +141,7 @@ class ScriptContent(ScriptDraft):
 
     mode: Literal["adapt", "generate"]
     experiment: bool = False  # Vrai si le script teste des patterns peu éprouvés.
+    core_idea: str = ""  # L'idée nue : c'est elle qu'on compare pour éviter les répétitions.
     topic_ids: list[str]
     estimated_duration_s: float
     words_per_second: float

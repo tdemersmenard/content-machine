@@ -34,6 +34,20 @@ class Settings(BaseSettings):
     learning_min_baseline: int = 3  # Relevés précédents requis pour calculer un score.
     learning_exploration_rate: float = 0.2
 
+    # Au-delà, une idée est considérée comme déjà produite. Voir CLAUDE.md pour la mesure.
+    idea_similarity_threshold: float = 0.60
+
+    model_agent: str = DEFAULT_MODEL
+    agent_scheduler_enabled: bool = True
+    agent_timezone: str = "America/Toronto"
+    # Tokens facturés par jour (entrée, sortie, écriture de cache). Environ 9 $ au tarif Opus 5.5.
+    agent_daily_token_budget: int = 1_000_000
+    agent_max_tool_rounds: int = 15
+    agent_daily_hour: int = 6
+    agent_weekly_hour: int = 7
+    agent_weekly_scripts: int = 5  # 0 désactive le plan de contenu de la semaine.
+    agent_inbox_interval_s: int = 60
+
     @field_validator("anthropic_api_key", mode="before")
     @classmethod
     def _blank_key_is_none(cls, value: object) -> object:

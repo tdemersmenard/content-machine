@@ -15,8 +15,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.chat import chat, start_session
+from app.agent.routines import WeeklyLearnings
+from app.agent.tools import TOOLS
 from app.analysis.service import analyze
-from app.db.models import Pattern
+from app.db.models import LLMCallStatus, Pattern
 from app.ingest.jobs import ingest
 from app.ingest.schemas import Word
 from app.ingest.signals import find_promise
@@ -26,6 +29,7 @@ from app.patterns.schemas import MergeDecision
 from tests.analysis_helpers import sample_analysis
 from tests.ingest_helpers import make_deps
 from tests.pattern_helpers import FakeEmbedder
+from tests.test_niche import make_niche
 
 MODEL = "claude-opus-5-5"
 
@@ -131,6 +135,141 @@ def test_request_and_response_through_the_real_sdk() -> None:
     assert record.cache_read_tokens == 30
     assert record.cache_write_tokens == 10
     assert record.cost_usd is not None and record.cost_usd > 0
+
+
+def sse_tool_use(thinking: str, tool_id: str, name: str, tool_input: dict[str, Any]) -> bytes:
+    """Une réponse avec un bloc thinking et un appel d'outil, comme l'API en streaming."""
+    usage = {"input_tokens": 50, "output_tokens": 1}
+    events = [
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_tool",
+                "type": "message",
+                "role": "assistant",
+                "model": MODEL,
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": usage,
+            },
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": thinking},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "sig-1"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": tool_id, "name": name, "input": {}},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool_input)},
+        },
+        {"type": "content_block_stop", "index": 1},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+            "usage": {"output_tokens": 30},
+        },
+        {"type": "message_stop"},
+    ]
+    return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
+
+
+def test_agent_loop_through_the_real_sdk(db: Session) -> None:
+    """La vraie requête de la boucle : outils, cache, thinking renvoyé, historique rechargeable."""
+    client, requests, records = client_replaying(
+        sse_tool_use("Je regarde le rapport.", "toolu_1", "learning_report", {}),
+        sse("Rien de mesuré."),
+        sse("Toujours rien."),
+    )
+    niche = make_niche(db)
+    agent_session = start_session(db, niche.id)
+
+    result = chat(db, agent_session, "Où j'en suis ?", client)
+    chat(db, agent_session, "Et là ?", client)
+
+    assert result.answer == "Rien de mesuré."
+    assert [step.name for step in result.steps] == ["learning_report", "learning_report"]
+
+    first, second, third = (json.loads(item.content) for item in requests)
+    assert {tool["name"] for tool in first["tools"]} == set(TOOLS)
+    assert first["cache_control"] == {"type": "ephemeral"}
+    assert first["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert first["output_config"] == {"effort": "medium"}
+    assert first["tools"][0]["eager_input_streaming"] is True
+
+    assistant = second["messages"][1]["content"]
+    assert assistant[0] == {
+        "type": "thinking",
+        "thinking": "Je regarde le rapport.",
+        "signature": "sig-1",
+    }
+    assert assistant[1]["type"] == "tool_use"
+    assert second["messages"][2]["content"][0]["tool_use_id"] == "toolu_1"
+
+    # Le thinking ne survit pas au tour : l'historique en base reste du JSON simple.
+    assert [block["type"] for block in third["messages"][1]["content"]] == ["tool_use"]
+    assert third["messages"][-1] == {"role": "user", "content": "Et là ?"}
+
+    assert [record.prompt_version for record in records] == ["agent_chat/v1"] * 3
+    assert records[0].status is LLMCallStatus.OK
+    assert records[0].cost_usd is not None and records[0].cost_usd > 0
+
+
+def test_tool_changes_show_in_the_prompt_hash() -> None:
+    client, _, records = client_replaying(sse("a"), sse("b"))
+    tool = {"name": "t", "description": "d", "input_schema": {"type": "object"}}
+    messages = [{"role": "user", "content": "x"}]
+
+    for description in ("d", "autre"):
+        client.call_tools(
+            prompt="agent_chat",
+            version="v1",
+            model=MODEL,
+            messages=messages,
+            tools=[{**tool, "description": description}],
+        )
+
+    assert records[0].prompt_hash != records[1].prompt_hash
+
+
+def test_weekly_report_schema_through_the_real_sdk() -> None:
+    answer = '{"headline": "h", "learned": [], "open_questions": [], "focus": "f"}'
+    client, requests, _ = client_replaying(sse(answer))
+
+    result = client.call_json(
+        prompt="weekly_report",
+        version="v1",
+        schema=WeeklyLearnings,
+        model=MODEL,
+        variables={
+            "week_start": "x",
+            "readings": "",
+            "post_mortems": "",
+            "lessons": "",
+            "report": "",
+        },
+    )
+
+    assert result.data.headline == "h"
+    schema = json.loads(requests[0].content)["output_config"]["format"]["schema"]
+    assert schema["additionalProperties"] is False
 
 
 def test_retry_echoes_the_real_content_blocks() -> None:

@@ -39,6 +39,8 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
   prompt caching fonctionne. Le loader refuse un system prompt contenant une variable.
 - **Sorties de Claude :** toujours du JSON validé par un modèle Pydantic. Tout appel passe par
   `ClaudeClient.call_json` (`get_claude()` dans `app/llm/client.py`), jamais par le SDK directement.
+  Seule exception : `ClaudeClient.call_tools`, un tour de la boucle de l'agent, dont la sortie est une
+  réponse en texte. L'entrée de chaque outil est validée par Pydantic.
 - **Journalisation :** chaque tentative d'appel écrit une ligne dans `llm_calls` avec
   `prompt_version`, les tokens et le coût. Quand un résultat est stocké (`analyses`, `scripts`),
   y copier `prompt_version` et le modèle depuis `ClaudeResult`.
@@ -99,6 +101,21 @@ Boucle produit : ingestion → analyse → patterns → génération → publica
   pattern gagnant plafonne donc. C'est l'écart entre patterns qui compte, pas la valeur absolue.
 - **Leçons :** elles sont désactivées, jamais supprimées. Une leçon sans vidéo réelle à l'appui est
   écartée, et écarter un pattern exige au moins 3 résultats.
+- **Agent (`app/agent/`) :** la liste de `TOOLS` est fermée et aucun outil ne publie : c'est le
+  créateur qui publie, et un test le vérifie. Une erreur d'outil revient à Claude, elle n'arrête pas la
+  conversation. La description des outils vit dans `agent_tools_v1.md`, une section `## nom` par outil.
+  Le hash de `llm_calls` inclut les outils. Les références `[vidéo 12]` d'une réponse sont vérifiées en
+  base. La mémoire date du début de la session : les stats se relisent par les outils.
+- **Budget :** `app/agent/budget.py` compte depuis `llm_calls` l'entrée, la sortie et l'écriture de
+  cache, jour local. Il se vérifie avant une action, avec une estimation : le dépassement est limité à
+  une action. Il couvre l'agent et les routines, pas les commandes manuelles comme `cm adapt`. Les
+  outils gratuits restent utilisables une fois le budget atteint.
+- **Routines :** chacune décide si elle est due d'après la base et se relance sans repayer. Une nouvelle
+  routine payante doit respecter cette règle. `WeeklyReport` est créé avant le plan : un crash ne
+  rejoue pas 6 $ de scripts. `paid_work` évite deux analyses en parallèle dans un même process.
+- **Idées répétées (`app/generate/novelty.py`) :** `generate` et `adapt` comparent `core_idea`, l'idée
+  nue en une phrase neutre, jamais l'angle : l'angle reprend le gabarit du hook et le filtre compare
+  alors le style. Toute nouvelle façon de produire une idée doit remplir `core_idea`.
 - **Noms de champs Pydantic :** éviter ceux de `BaseModel`, comme `register`. Ils deviennent
   silencieusement optionnels.
 - **Timeline :** `timeline.json` est le contrat avec le module d'analyse. Incrémenter
@@ -132,6 +149,11 @@ uv run cm stats <script_id>                            # Saisir les stats d'une 
 uv run cm stats-import <csv> --horizon 72 [--preset tiktok] [--map Colonne=champ]
 uv run cm learn [--force]                              # Post-mortems manquants et leçons
 uv run cm report [--niche <id>]                        # Rapport de suivi
+uv run cm publish <script_id> [--video <id>] [--at <date>]  # Noter une publication (lance les rappels)
+uv run cm chat --niche <id> [--resume <session>]       # Parler à l'agent (/fin pour quitter)
+uv run cm notifications [--all]                        # Lire les notifications
+uv run cm actions [--limit 20]                         # Budget du jour et journal de l'agent
+uv run cm routine <daily|weekly|reminders|inbox> [--force]  # Lancer une routine à la main
 uv run cm worker                                       # Traiter la file sans lancer l'API
 uv run ruff format .; uv run ruff check .              # Formatage et lint
 uv run alembic revision --autogenerate -m "message"    # Créer une migration
@@ -162,11 +184,21 @@ API des scripts (synchrone, plusieurs minutes) : `POST /scripts/adapt`, `POST /s
 API de l'apprentissage : `POST /scripts/{id}/performance`, `POST /performance/import`,
 `GET /learning/report` (`niche_id`), et le formulaire `GET /forms/performance`.
 
+API de l'agent : `POST /agent/chat` (`niche_id`, `message`, `session_id` pour reprendre ; synchrone, le
+journal montre l'avancement), `GET /agent/sessions/{id}`, `GET /agent/actions`, `GET /agent/budget`,
+`GET /agent/notifications` (`unread`), `POST /agent/notifications/{id}/read`, `GET /agent/reports`.
+
+Dossier surveillé : `data/inbox/` pour les vidéos des autres, `data/inbox/mine/` pour les miennes. Une
+vidéo déposée est ingérée et analysée quand l'API tourne (ou avec `cm routine inbox`), puis rangée dans
+`done/` ou `failed/`. Les rapports du lundi sont aussi écrits dans `data/reports/`.
+
 Variables d'environnement (`.env`, voir `.env.example`) : `ANTHROPIC_API_KEY`, `MODEL_ANALYSIS`,
 `MODEL_GENERATION`, `DATA_DIR`, `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`,
 `SCENE_THRESHOLD`, `VISION_BATCH_SIZE`, `MAX_VIDEO_DURATION_S`, `INGEST_WORKER_ENABLED`,
 `EMBEDDING_MODEL`, `PATTERN_MERGE_THRESHOLD`, `LEARNING_HALF_LIFE_DAYS`, `LEARNING_MIN_BASELINE`,
-`LEARNING_EXPLORATION_RATE`.
+`LEARNING_EXPLORATION_RATE`, `IDEA_SIMILARITY_THRESHOLD`, `MODEL_AGENT`, `AGENT_SCHEDULER_ENABLED`,
+`AGENT_TIMEZONE`, `AGENT_DAILY_TOKEN_BUDGET`, `AGENT_MAX_TOOL_ROUNDS`, `AGENT_DAILY_HOUR`,
+`AGENT_WEEKLY_HOUR`, `AGENT_WEEKLY_SCRIPTS`, `AGENT_INBOX_INTERVAL_S`.
 
 Prérequis système : ffmpeg et ffprobe dans le PATH.
 
@@ -174,7 +206,7 @@ Prérequis système : ffmpeg et ffprobe dans le PATH.
 
 À mettre à jour à la fin de chaque prompt.
 
-**Dernière mise à jour : 2026-11-05, module d'apprentissage.**
+**Dernière mise à jour : 2026-11-06, module agent.**
 
 Fait :
 - Fondations : arborescence, configuration, modèles SQLAlchemy, migration `0001`, wrapper Claude
@@ -201,8 +233,21 @@ Fait :
 - `app/learning/` : saisie des stats (API, formulaire, CLI, CSV), score normalisé, mise à jour des
   patterns avec decay, scores par niche, post-mortems, leçons tous les 5 résultats, rapport,
   exploration à 20 %. Migration `0007`.
+- `app/agent/` : boucle d'outils (11 outils), `cm chat`, `/agent/chat`, mémoire de session, citations
+  vérifiées, budget de tokens, journal, notifications, routines APScheduler (quotidien, rappels à 24 h,
+  72 h et 7 jours, rapport et plan du lundi, dossier surveillé), `cm publish`. Migration `0008`.
+- Plus de répétition d'idées : `core_idea`, `script_ideas/v2`, `script_transpose/v2`.
 
 À surveiller :
+- `IDEA_SIMILARITY_THRESHOLD=0.60`, mesuré sur des `core_idea` de cette niche : 6 reformulations écrites
+  à la main entre 0,67 et 0,83, 10 idées différentes à 0,52 au plus. Aucune répétition réelle n'a encore
+  été attrapée par le filtre sur des `core_idea` : sur le vrai essai, Claude les avait déjà évitées. À revoir
+  quand la banque d'idées grossira. Le texte écrit peut aussi dériver de son `core_idea` : seule l'idée de
+  départ est contrôlée, pas le script final.
+- Rattrapage du lundi : au démarrage de l'API, un rapport manquant est lancé, quel que soit le jour. Le
+  premier démarrage de la semaine peut donc coûter environ 6 $ (5 scripts) et 30 minutes.
+- Une session longue renvoie tout son historique à chaque tour. Le cache limite le coût, mais rien ne
+  résume une conversation. Lancer une nouvelle session reste la solution.
 - `PATTERN_MERGE_THRESHOLD=0.70`, abaissé depuis 0,85 après mesure sur 6 fiches de test : une vraie
   reformulation française du même pattern donne 0,727, une traduction anglaise 0,897, et la paire
   différente la plus proche 0,646. Claude filtre ensuite les faux positifs. À revoir sur de vraies
@@ -234,7 +279,22 @@ Validé en conditions réelles pour la niche, avec un créateur fictif sur une b
 - Entrevue, profil et banque de sujets en québécois. La voix sur la transcription de keo_fdb.
   0,45 $ pour une entrevue de 14 réponses, environ 6 s d'attente par question.
 
+Validé en conditions réelles pour l'agent, sur une copie de la base (environ 1,60 $ au total) :
+- `cm chat` sans le terminal : `get_performance` sans stats (réponse honnête, 0,05 $), `top_patterns`, un
+  script par `generate` (1,20 $, 128 000 tokens). Outils, thinking, cache et historique relu sans thinking
+  sont acceptés par l'API. Le cache marche : 38 000 tokens lus pour 22 tokens d'entrée.
+- Rapport du lundi avec des stats fictives : 0,03 $, prudent sur une seule vidéo.
+- 7 vraies idées pour un plan de 5 : 0,18 $, aucune écartée, 5 retenues dont 1 exploration.
+- Le planificateur a démarré avec l'application et fait son rattrapage. Essai fait dans un process Python
+  (`TestClient`), pas avec un vrai `uvicorn`.
+
 Non vérifié en conditions réelles :
+- Plan complet de 5 scripts : seuls les idées et 1 script ont tourné pour de vrai. Le coût de 6 $ et les
+  30 minutes sont extrapolés.
+- Dossier surveillé et `ingest` par l'agent avec de vraies vidéos : testés avec un vrai fichier et ffmpeg,
+  mais sans vrai Claude ni Whisper. « Voici 5 liens » n'a jamais tourné pour de vrai (environ 8 $).
+- Cron à l'heure réelle : le planificateur n'a tourné que quelques secondes, le lundi 7 h n'a pas été
+  attendu. Les routines ne tournent que si l'API tourne.
 - Toute la boucle d'apprentissage sur de vraies stats : aucune vraie vidéo publiée à ce jour. Elle est
   validée par une simulation de 30 vidéos. Les prompts ont tourné pour de vrai sur une copie de la
   base, avec des stats fictives : post-mortem bon et prudent (0,10 $), synthèse à 0,04 $ qui a refusé
@@ -256,7 +316,8 @@ Non vérifié en conditions réelles :
 - Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
-- Module `agent` et dashboard `web/` (seul le formulaire de stats existe).
+- Dashboard `web/` : seul le formulaire de stats existe. Les notifications sont lisibles par l'API et
+  par `cm notifications` en attendant.
 - Crédit des patterns : chaque pattern d'une vidéo reçoit le même mérite, et `adapt` en déclare
   souvent beaucoup. L'effet d'un pattern seul reste donc difficile à isoler.
 - `POST /videos/{id}/analyze` et `POST /scripts/*` sont synchrones et prennent plusieurs minutes. À

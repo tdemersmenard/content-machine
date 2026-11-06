@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AwareDatetime, BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,7 @@ class ScriptPatch(BaseModel):
     status: ScriptStatus | None = None
     content: dict[str, Any] | None = None
     published_video_id: int | None = None
+    published_at: AwareDatetime | None = None
 
 
 class ScriptOut(BaseModel):
@@ -56,6 +57,7 @@ class ScriptOut(BaseModel):
     prompt_version: str
     status: ScriptStatus
     published_video_id: int | None
+    published_at: datetime | None
     predicted_score: float | None
     created_at: datetime
     content: ScriptContent
@@ -77,6 +79,7 @@ def _out(script: Script) -> ScriptOut:
         prompt_version=script.prompt_version,
         status=script.status,
         published_video_id=script.published_video_id,
+        published_at=script.published_at,
         predicted_score=script.predicted_score,
         created_at=script.created_at,
         content=content,
@@ -129,7 +132,11 @@ def patch_script(script_id: int, body: ScriptPatch, db: Db) -> ScriptOut:
     if script is None:
         raise HTTPException(404, "Script inconnu.")
     try:
-        return _out(update_script(db, script, body.status, body.content, body.published_video_id))
+        return _out(
+            update_script(
+                db, script, body.status, body.content, body.published_video_id, body.published_at
+            )
+        )
     except ValidationError as exc:
         db.rollback()
         raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc

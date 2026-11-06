@@ -4,6 +4,7 @@ import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any, Self
@@ -15,6 +16,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.db.base import utcnow
 from app.db.models import (
     Analysis,
     Lesson,
@@ -39,6 +41,7 @@ from app.generate.guards import (
     spoken_texts,
     verification_notes,
 )
+from app.generate.novelty import NoveltyFilter, Repeat
 from app.generate.report import render_script
 from app.generate.schemas import (
     Critique,
@@ -55,6 +58,7 @@ from app.niche.profile import deep_merge, load_profile
 from app.niche.schemas import NicheProfile
 from app.niche.topics import set_topic_status
 from app.niche.voice import contains_phrase
+from app.patterns.embeddings import Embedder
 from app.patterns.search import niche_scores, score_mean
 
 logger = logging.getLogger(__name__)
@@ -75,6 +79,7 @@ class GenerationError(Exception):
 class GenerationResult:
     scripts: list[Script] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    repeats: list[Repeat] = field(default_factory=list)  # Idées écartées car déjà produites.
 
 
 @dataclass
@@ -92,6 +97,7 @@ class Brief:
     duration_source: str
     source_video_id: int | None = None
     experiment: bool = False
+    core_idea: str = ""
 
 
 def _model() -> str:
@@ -279,6 +285,7 @@ def _produce(session: Session, claude: ClaudeClient, brief: Brief) -> Script:
         **ScriptDraft.model_validate(draft.model_dump()).model_dump(),
         mode=brief.mode,
         experiment=brief.experiment,
+        core_idea=brief.core_idea,
         topic_ids=brief.topic_ids,
         estimated_duration_s=duration,
         words_per_second=brief.words_per_second,
@@ -359,9 +366,11 @@ def adapt(
     niche_id: int,
     claude: ClaudeClient,
     n_variantes: int = 3,
+    embedder: Embedder | None = None,
 ) -> GenerationResult:
     """Adapte une vidéo analysée à une niche : squelette, transposition, écriture."""
     niche, profile = _niche_with_profile(session, niche_id)
+    novelty = NoveltyFilter(session, niche_id, embedder)
     video = session.get(Video, video_id)
     if video is None:
         raise LookupError(f"Vidéo {video_id} inconnue.")
@@ -402,7 +411,7 @@ def adapt(
     lessons = active_lessons(session, niche_id)
     transposition = claude.call_json(
         prompt="script_transpose",
-        version="v1",
+        version="v2",
         schema=_transposition_schema(
             n_variantes, len(skeleton.beats), {item["id"] for item in topics}
         ),
@@ -413,9 +422,20 @@ def adapt(
             "profile": _profile_json(profile),
             "topics": json.dumps(topics, ensure_ascii=False),
             "lessons": json.dumps(_lesson_texts(lessons), ensure_ascii=False),
+            "past_ideas": json.dumps(novelty.past, ensure_ascii=False),
         },
         effort="high",
     ).data
+
+    verdicts = novelty.check([item.core_idea for item in transposition.variants])
+    variants = [
+        item
+        for item, repeat in zip(transposition.variants, verdicts, strict=True)
+        if repeat is None
+    ]
+    repeats = [item for item in verdicts if item is not None]
+    if not variants:
+        raise GenerationError("Toutes les variantes répètent des idées déjà produites.")
 
     fallback = (video.signals or {}).get("words_per_second")
     speed, speed_source = _voice_speed(profile, fallback)
@@ -435,6 +455,7 @@ def adapt(
             words_per_second=speed,
             duration_source=speed_source,
             source_video_id=video.id,
+            core_idea=variant.core_idea,
             content={
                 "profile": profile.model_dump(mode="json"),
                 "skeleton": skeleton.model_dump(),
@@ -445,9 +466,11 @@ def adapt(
                 "words_per_second": speed,
             },
         )
-        for variant in transposition.variants
+        for variant in variants
     ]
-    return _produce_all(session, claude, briefs)
+    result = _produce_all(session, claude, briefs)
+    result.repeats = repeats
+    return result
 
 
 def _by_type(patterns: list[Pattern]) -> list[list[Pattern]]:
@@ -495,7 +518,13 @@ def exploration_slots(count: int, rate: float, rng: np.random.Generator) -> int:
     return int(count * rate + rng.random())
 
 
-def _ideas_schema(count: int, combinations: int, topic_ids: set[str]) -> type[IdeaBatch]:
+def _ideas_schema(
+    count: int,
+    combinations: int,
+    topic_ids: set[str],
+    first_test: int | None = None,
+    required_tests: int = 0,
+) -> type[IdeaBatch]:
     class ExactIdeas(IdeaBatch):
         @model_validator(mode="after")
         def _complete(self) -> Self:
@@ -506,6 +535,13 @@ def _ideas_schema(count: int, combinations: int, topic_ids: set[str]) -> type[Id
                     raise ValueError(f"Combinaison inconnue : {idea.combination_index}")
                 if idea.topic_id not in topic_ids:
                     raise ValueError(f"Sujet inconnu : {idea.topic_id}")
+            if required_tests:
+                tests = sum(idea.combination_index >= first_test for idea in self.ideas)
+                if tests < required_tests:
+                    raise ValueError(
+                        f"Il faut au moins {required_tests} idée(s) sur les combinaisons "
+                        f"à partir de l'index {first_test}."
+                    )
             return self
 
     return ExactIdeas
@@ -519,9 +555,19 @@ def generate(
     n: int = 5,
     develop: int = 3,
     seed: int | None = None,
+    exploration: int | None = None,
+    embedder: Embedder | None = None,
 ) -> GenerationResult:
-    """Propose `n` idées puis développe les `develop` meilleures en scripts."""
+    """Propose `n` idées puis développe les `develop` meilleures en scripts.
+
+    `exploration` impose un nombre exact de scripts d'exploration. Sinon, le nombre suit
+    LEARNING_EXPLORATION_RATE, avec un arrondi aléatoire.
+
+    Une idée qui répète un script déjà produit est écartée. S'il n'en reste pas assez, Claude en
+    propose d'autres une seule fois, et il peut donc y avoir moins de `develop` scripts.
+    """
     niche, profile = _niche_with_profile(session, niche_id)
+    novelty = NoveltyFilter(session, niche_id, embedder)
     lessons = active_lessons(session, niche_id)
     avoided = avoided_pattern_ids(lessons)
     patterns = [item for item in session.scalars(select(Pattern)).all() if item.id not in avoided]
@@ -535,35 +581,57 @@ def generate(
     rng = np.random.default_rng(seed)
     scores = niche_scores(session, niche_id)
     rate = get_settings().learning_exploration_rate
-    tests = exploration_slots(n, rate, rng)
+    tests = exploration if exploration is not None else exploration_slots(n, rate, rng)
     combinations = [
         *[thompson_combination(patterns, rng, scores) for _ in range(n - tests)],
         *[exploration_combination(patterns, rng, scores) for _ in range(tests)],
     ]
     first_test = n - tests
 
-    ideas = claude.call_json(
-        prompt="script_ideas",
-        version="v1",
-        schema=_ideas_schema(n, len(combinations), {item["id"] for item in topics}),
-        model=_model(),
-        variables={
-            "count": n,
-            "objective": goal,
-            "profile": _profile_json(profile),
-            "topics": json.dumps(topics, ensure_ascii=False),
-            "combinations": json.dumps(
-                [_pattern_cards(items) for items in combinations], ensure_ascii=False
+    def propose(past: list[str]) -> list[Any]:
+        return claude.call_json(
+            prompt="script_ideas",
+            version="v2",
+            schema=_ideas_schema(
+                n,
+                len(combinations),
+                {item["id"] for item in topics},
+                first_test,
+                exploration or 0,
             ),
-            "lessons": json.dumps(_lesson_texts(lessons), ensure_ascii=False),
-        },
-        effort="high",
-    ).data.ideas
+            model=_model(),
+            variables={
+                "count": n,
+                "objective": goal,
+                "profile": _profile_json(profile),
+                "topics": json.dumps(topics, ensure_ascii=False),
+                "combinations": json.dumps(
+                    [_pattern_cards(items) for items in combinations], ensure_ascii=False
+                ),
+                "lessons": json.dumps(_lesson_texts(lessons), ensure_ascii=False),
+                "past_ideas": json.dumps(past, ensure_ascii=False),
+            },
+            effort="high",
+        ).data.ideas
+
+    def fresh_only(batch: list[Any]) -> tuple[list[Any], list[Repeat]]:
+        verdicts = novelty.check([item.core_idea for item in batch])
+        kept = [item for item, repeat in zip(batch, verdicts, strict=True) if repeat is None]
+        return kept, [item for item in verdicts if item is not None]
+
+    ideas, repeats = fresh_only(propose(novelty.past))
+    if len(ideas) < develop:
+        more, rejected = fresh_only(propose([*novelty.past, *[item.text for item in repeats]]))
+        ideas += more
+        repeats += rejected
+    if not ideas:
+        raise GenerationError("Toutes les idées proposées répètent des scripts déjà produits.")
 
     ranked = sorted(ideas, key=lambda item: item.potential, reverse=True)
     # Sans place réservée, une idée de test perdrait presque toujours face aux valeurs sûres.
     reserved = [item for item in ranked if item.combination_index >= first_test]
-    reserved = reserved[: exploration_slots(develop, rate, rng)]
+    slots = exploration if exploration is not None else exploration_slots(develop, rate, rng)
+    reserved = reserved[:slots]
     best = [*reserved, *[item for item in ranked if item not in reserved]][:develop]
     speed, speed_source = _voice_speed(profile, None)
     never_say = tuple(profile.voice.never_say)
@@ -587,6 +655,7 @@ def generate(
                 words_per_second=speed,
                 duration_source=speed_source,
                 experiment=idea.combination_index >= first_test,
+                core_idea=idea.core_idea,
                 content={
                     "profile": profile.model_dump(mode="json"),
                     "idea": idea.model_dump(),
@@ -599,7 +668,9 @@ def generate(
                 },
             )
         )
-    return _produce_all(session, claude, briefs)
+    result = _produce_all(session, claude, briefs)
+    result.repeats = repeats
+    return result
 
 
 def load_content(script: Script) -> ScriptContent:
@@ -612,12 +683,19 @@ def update_script(
     status: ScriptStatus | None = None,
     changes: dict[str, Any] | None = None,
     published_video_id: int | None = None,
+    published_at: datetime | None = None,
 ) -> Script:
     """Édite un script. Lève une ValidationError si le contenu devient invalide.
 
     Les garde-fous ne s'appliquent qu'à ce que Claude écrit : tes éditions restent les tiennes.
     À la première validation, les sujets passent à « used » et le compteur des patterns monte.
+    Publier fixe `published_at`, d'où partent les rappels de stats.
     """
+    if published_at is not None:
+        script.published_at = published_at
+    elif status is ScriptStatus.PUBLISHED and script.published_at is None:
+        script.published_at = utcnow()
+
     if changes:
         content = ScriptContent.model_validate(deep_merge(script.content, changes))
         content.estimated_duration_s = _apply_timing(content, content.words_per_second)

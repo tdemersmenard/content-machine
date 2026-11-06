@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -176,8 +176,12 @@ def save_performance(
         rebuild_pattern_scores(session)
     session.commit()
 
+    if script.published_at is None:
+        # Saisir un relevé à 72 h veut dire que la vidéo est sortie 72 h plus tôt.
+        script.published_at = row.measured_at - timedelta(hours=data.horizon_h)
     if script.status is not ScriptStatus.PUBLISHED:
         update_script(session, script, status=ScriptStatus.PUBLISHED)
+    session.commit()
     return row
 
 

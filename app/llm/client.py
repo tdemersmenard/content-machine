@@ -7,12 +7,13 @@
 """
 
 import base64
+import hashlib
 import json
 import logging
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 SDK_MAX_RETRIES = 4
 MAX_ATTEMPTS = 2  # L'appel initial, plus un retry si la sortie est invalide.
 DEFAULT_MAX_TOKENS = 64_000
+TOOL_TURN_MAX_TOKENS = 16_000
 
 # Modèles qui acceptent le fallback serveur en cas de refus (pas Haiku, par exemple).
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -91,6 +93,17 @@ class ClaudeResult[T: BaseModel]:
     cost_usd: float | None
 
 
+@dataclass(frozen=True)
+class ToolTurn:
+    """Un tour de la boucle d'outils. `content` se renvoie tel quel, thinking compris."""
+
+    content: list[Any]
+    stop_reason: str | None
+    model: str
+    prompt_version: str
+    cost_usd: float | None
+
+
 def db_call_logger(record: LLMCallRecord) -> None:
     """Écrit dans sa propre session : la trace survit à un rollback de l'appelant."""
     with get_session_factory()() as session:
@@ -140,6 +153,10 @@ def _strip_code_fence(text: str) -> str:
     return match.group(1) if match else text
 
 
+def _message_text(message: Any) -> str:
+    return "".join(block.text for block in message.content if block.type == "text")
+
+
 class ClaudeClient:
     def __init__(self, sdk: Anthropic, call_logger: CallLogger = db_call_logger) -> None:
         self._sdk = sdk
@@ -180,62 +197,18 @@ class ClaudeClient:
         if constrained:
             output_config["format"] = {"type": "json_schema", "schema": transform_schema(schema)}
 
-        params: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "system": [
-                {
-                    "type": "text",
-                    "text": loaded.system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            "output_config": output_config,
-        }
-        if model in FALLBACK_MODELS:
-            params["betas"] = [FALLBACK_BETA]
-            params["fallbacks"] = "default"
+        params = self._base_params(loaded, model, max_tokens)
+        params["output_config"] = output_config
 
         total_cost: float | None = 0.0
         for attempt in range(1, MAX_ATTEMPTS + 1):
             message, request_id, latency_ms = self._send(loaded, params, messages, model, attempt)
-            usages = extract_usages(message)
-            cost = compute_cost(usages)
+            fields = self._call_fields(loaded, model, message, request_id, attempt, latency_ms)
+            cost = fields["cost_usd"]
             total_cost = None if total_cost is None or cost is None else total_cost + cost
 
-            fields: dict[str, Any] = {
-                "prompt_version": loaded.prompt_version,
-                "prompt_hash": loaded.content_hash,
-                "model_requested": model,
-                "model_served": message.model,
-                "request_id": request_id,
-                "attempt": attempt,
-                "latency_ms": latency_ms,
-                "input_tokens": sum(u.input_tokens for u in usages),
-                "output_tokens": sum(u.output_tokens for u in usages),
-                "cache_read_tokens": sum(u.cache_read_tokens for u in usages),
-                "cache_write_tokens": sum(u.cache_write_tokens for u in usages),
-                "cost_usd": cost,
-            }
-
-            if message.stop_reason == "refusal":
-                details = message.stop_details
-                category = details.category if details else None
-                explanation = details.explanation if details else None
-                error = f"Refus ({category}) : {explanation}"
-                self._record(LLMCallRecord(**fields, status=LLMCallStatus.REFUSAL, error=error))
-                raise ClaudeRefusalError(error, category=category)
-
-            text = "".join(block.text for block in message.content if block.type == "text")
-
-            if message.stop_reason == "max_tokens":
-                error = f"Sortie tronquée à max_tokens={max_tokens}"
-                self._record(
-                    LLMCallRecord(
-                        **fields, status=LLMCallStatus.TRUNCATED, error=error, raw_output=text
-                    )
-                )
-                raise ClaudeTruncatedError(error)
+            self._check_stop(message, fields, max_tokens)
+            text = _message_text(message)
 
             try:
                 data = schema.model_validate_json(_strip_code_fence(text))
@@ -271,6 +244,111 @@ class ClaudeClient:
             )
 
         raise AssertionError("Boucle de tentatives terminée sans résultat")  # pragma: no cover
+
+    def call_tools(
+        self,
+        *,
+        prompt: str,
+        version: str,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        effort: Effort = "medium",
+        max_tokens: int = TOOL_TURN_MAX_TOKENS,
+    ) -> ToolTurn:
+        """Un tour de la boucle d'outils. La boucle elle-même est dans app/agent/chat.py.
+
+        C'est la seule sortie de Claude qui n'est pas du JSON validé : une réponse à l'utilisateur
+        est du texte, et l'entrée de chaque outil est validée par Pydantic avant son exécution.
+        """
+        loaded = load_prompt(prompt, version)
+        # Les outils font partie du prompt : le hash révèle aussi leurs modifications.
+        signature = loaded.content_hash + json.dumps(tools, sort_keys=True, ensure_ascii=False)
+        loaded = replace(
+            loaded, content_hash=hashlib.sha256(signature.encode("utf-8")).hexdigest()[:12]
+        )
+
+        params = self._base_params(loaded, model, max_tokens)
+        params["output_config"] = {"effort": effort}
+        params["tools"] = tools
+        # Le system a son propre point de cache. Celui-ci suit la fin de la conversation.
+        params["cache_control"] = {"type": "ephemeral"}
+
+        message, request_id, latency_ms = self._send(loaded, params, messages, model, 1)
+        fields = self._call_fields(loaded, model, message, request_id, 1, latency_ms)
+        self._check_stop(message, fields, max_tokens)
+        self._record(LLMCallRecord(**fields, status=LLMCallStatus.OK))
+        return ToolTurn(
+            content=message.content,
+            stop_reason=message.stop_reason,
+            model=message.model,
+            prompt_version=loaded.prompt_version,
+            cost_usd=fields["cost_usd"],
+        )
+
+    @staticmethod
+    def _base_params(loaded: Prompt, model: str, max_tokens: int) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": [
+                {
+                    "type": "text",
+                    "text": loaded.system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+        if model in FALLBACK_MODELS:
+            params["betas"] = [FALLBACK_BETA]
+            params["fallbacks"] = "default"
+        return params
+
+    @staticmethod
+    def _call_fields(
+        loaded: Prompt,
+        model: str,
+        message: Any,
+        request_id: str | None,
+        attempt: int,
+        latency_ms: int,
+    ) -> dict[str, Any]:
+        usages = extract_usages(message)
+        return {
+            "prompt_version": loaded.prompt_version,
+            "prompt_hash": loaded.content_hash,
+            "model_requested": model,
+            "model_served": message.model,
+            "request_id": request_id,
+            "attempt": attempt,
+            "latency_ms": latency_ms,
+            "input_tokens": sum(u.input_tokens for u in usages),
+            "output_tokens": sum(u.output_tokens for u in usages),
+            "cache_read_tokens": sum(u.cache_read_tokens for u in usages),
+            "cache_write_tokens": sum(u.cache_write_tokens for u in usages),
+            "cost_usd": compute_cost(usages),
+        }
+
+    def _check_stop(self, message: Any, fields: dict[str, Any], max_tokens: int) -> None:
+        if message.stop_reason == "refusal":
+            details = message.stop_details
+            category = details.category if details else None
+            explanation = details.explanation if details else None
+            error = f"Refus ({category}) : {explanation}"
+            self._record(LLMCallRecord(**fields, status=LLMCallStatus.REFUSAL, error=error))
+            raise ClaudeRefusalError(error, category=category)
+
+        if message.stop_reason == "max_tokens":
+            error = f"Sortie tronquée à max_tokens={max_tokens}"
+            self._record(
+                LLMCallRecord(
+                    **fields,
+                    status=LLMCallStatus.TRUNCATED,
+                    error=error,
+                    raw_output=_message_text(message),
+                )
+            )
+            raise ClaudeTruncatedError(error)
 
     def _send(
         self,

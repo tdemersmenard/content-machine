@@ -103,6 +103,7 @@ class FakeScriptClaude:
                 {
                     "variants": [
                         {
+                            "core_idea": f"Idée de fond {index}",
                             "angle": f"Angle {index}",
                             "belief_attacked": "Il faut un gros capital",
                             "topic_ids": [],
@@ -131,6 +132,7 @@ class FakeScriptClaude:
                         {
                             "combination_index": index,
                             "topic_id": topics[index]["id"],
+                            "core_idea": f"Idée de fond {index}",
                             "angle": f"Idée {index}",
                             "belief_attacked": "Croyance",
                             "why": "Parce que",

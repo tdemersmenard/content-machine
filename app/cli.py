@@ -3,6 +3,7 @@
 import json
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -12,15 +13,23 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.budget import budget_status
+from app.agent.chat import AgentError, Step, chat, start_session
+from app.agent.routines import Inbox, Services, run_daily, run_reminders, run_weekly
 from app.analysis.service import AnalysisError, analyze, pending_video_ids, report_path
+from app.db.base import utcnow
 from app.db.models import (
+    AgentAction,
+    AgentSession,
     IngestJob,
     JobStatus,
     Niche,
     NicheInterview,
+    Notification,
     Pattern,
     PatternType,
     Script,
+    ScriptStatus,
     Video,
 )
 from app.db.session import get_session_factory
@@ -31,6 +40,7 @@ from app.generate.service import (
     generate,
     load_content,
     script_path,
+    update_script,
 )
 from app.ingest.jobs import Submission, Worker, canonical, drain, latest_job, run_job, submit
 from app.ingest.pipeline import IngestDeps, IngestError
@@ -499,6 +509,141 @@ def report_command(
     """Affiche le rapport de suivi."""
     with get_session_factory()() as session:
         typer.echo(json.dumps(build_report(session, niche), ensure_ascii=False, indent=2))
+
+
+@cli.command("publish")
+def publish_command(
+    script_id: int,
+    video: Annotated[int | None, typer.Option("--video", help="Id de la vidéo ingérée.")] = None,
+    at: Annotated[
+        datetime | None,
+        typer.Option("--at", help="Date de publication, si ce n'est pas maintenant."),
+    ] = None,
+) -> None:
+    """Note qu'un script est publié : c'est toi qui publies, ça lance les rappels de stats."""
+    with get_session_factory()() as session:
+        script = session.get(Script, script_id)
+        if script is None:
+            typer.echo("Script inconnu.", err=True)
+            raise typer.Exit(1)
+        published_at = at.astimezone(UTC) if at else None
+        try:
+            update_script(
+                session,
+                script,
+                status=ScriptStatus.PUBLISHED,
+                published_video_id=video,
+                published_at=published_at,
+            )
+        except LookupError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(f"Script {script_id} publié. Rappels de stats à 24 h, 72 h et 7 jours.")
+
+
+def _show_step(step: Step) -> None:
+    if step.kind == "text":
+        typer.echo(step.detail)
+    elif step.kind == "tool_start":
+        typer.echo(f"  → {step.name} {step.detail}")
+    elif step.is_error:
+        typer.echo(f"  ✗ {step.name} : {step.detail[:300]}", err=True)
+
+
+@cli.command("chat")
+def chat_command(
+    niche: Annotated[int, typer.Option("--niche", help="Id de la niche.")],
+    resume: Annotated[int | None, typer.Option("--resume", help="Id de la session.")] = None,
+) -> None:
+    """Parle à l'agent. Tape /fin pour quitter."""
+    claude = default_claude()
+    with get_session_factory()() as session:
+        try:
+            agent_session = (
+                session.get(AgentSession, resume) if resume else start_session(session, niche)
+            )
+        except AgentError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+        if agent_session is None or agent_session.niche_id != niche:
+            typer.echo("Session inconnue pour cette niche.", err=True)
+            raise typer.Exit(1)
+
+        typer.echo(f"Session {agent_session.id}. Tape /fin pour quitter.")
+        while True:
+            message = typer.prompt("\n>", prompt_suffix=" ").strip()
+            if message == "/fin":
+                break
+            try:
+                result = chat(session, agent_session, message, claude, _show_step)
+            except ClaudeError as exc:
+                raise _claude_failure(exc) from exc
+            typer.echo(f"\n{result.answer}")
+            if result.unverified:
+                typer.echo(f"Références introuvables : {', '.join(result.unverified)}", err=True)
+            typer.echo(f"({result.tokens} tokens, {result.cost_usd:.2f} $)")
+
+
+@cli.command("notifications")
+def notifications_command(
+    all_: Annotated[bool, typer.Option("--all", help="Aussi celles déjà lues.")] = False,
+) -> None:
+    """Affiche les notifications et les marque comme lues."""
+    with get_session_factory()() as session:
+        statement = select(Notification).order_by(Notification.id)
+        if not all_:
+            statement = statement.where(Notification.read_at.is_(None))
+        rows = session.scalars(statement).all()
+        if not rows:
+            typer.echo("Aucune notification.")
+        for row in rows:
+            typer.echo(f"#{row.id} [{row.kind}] {row.title}\n{row.body}\n")
+            row.read_at = row.read_at or utcnow()
+        session.commit()
+
+
+@cli.command("actions")
+def actions_command(
+    limit: Annotated[int, typer.Option("--limit", help="Nombre d'actions.")] = 20,
+) -> None:
+    """Affiche le budget du jour et le journal de l'agent."""
+    with get_session_factory()() as session:
+        budget = budget_status(session)
+        typer.echo(
+            f"Budget du jour : {budget['used']}/{budget['limit']} tokens "
+            f"({budget['cost_usd']:.2f} $)"
+        )
+        rows = session.scalars(
+            select(AgentAction).order_by(AgentAction.id.desc()).limit(limit)
+        ).all()
+        for row in reversed(rows):
+            summary = (row.summary or "")[:100].replace("\n", " ")
+            typer.echo(
+                f"#{row.id} {row.created_at:%Y-%m-%d %H:%M} {row.source}/{row.action} "
+                f"{row.status.value} {summary}"
+            )
+
+
+@cli.command("routine")
+def routine_command(
+    name: Annotated[str, typer.Argument(help="daily, weekly, reminders ou inbox.")],
+    force: Annotated[bool, typer.Option("--force", help="Lance même si ce n'est pas dû.")] = False,
+) -> None:
+    """Lance une routine à la main, par exemple quand l'API ne tourne pas."""
+    if name == "daily":
+        result = run_daily(Services(default_claude(), default_deps()), force)
+        typer.echo("Pas due." if result is None else json.dumps(result))
+    elif name == "weekly":
+        reports = run_weekly(Services(default_claude(), default_deps()), force)
+        typer.echo(f"Rapports créés : {reports}" if reports else "Pas due.")
+    elif name == "reminders":
+        typer.echo(f"{run_reminders()} rappel(s) créé(s).")
+    elif name == "inbox":
+        videos = Inbox().scan(Services(default_claude(), default_deps()), wait_for_copy=False)
+        typer.echo(f"Vidéos analysées : {videos}")
+    else:
+        typer.echo("Routine inconnue : daily, weekly, reminders ou inbox.", err=True)
+        raise typer.Exit(2)
 
 
 @cli.command("status")

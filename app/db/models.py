@@ -70,6 +70,13 @@ class LLMCallStatus(StrEnum):
     ERROR = "error"
 
 
+class ActionStatus(StrEnum):
+    RUNNING = "running"
+    OK = "ok"
+    ERROR = "error"
+    REFUSED = "refused"  # Refusée par un garde-fou, par exemple le budget.
+
+
 def _enum(enum_cls: type[StrEnum], name: str) -> Enum:
     """Enum stocké en texte avec une contrainte CHECK sur les valeurs."""
     return Enum(
@@ -299,6 +306,11 @@ class Script(Base):
         ForeignKey("videos.id", ondelete="SET NULL")
     )
     predicted_score: Mapped[float | None] = mapped_column(Float)
+    # Point de départ des rappels de stats à 24 h, 72 h et 7 jours.
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Angle et croyance attaquée, pour ne jamais répéter une idée (app/generate/novelty.py).
+    idea_embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    embedding_model: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -401,6 +413,74 @@ class Lesson(Base):
     active: Mapped[bool] = mapped_column(default=True)
     deactivated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     deactivated_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class AgentSession(Base):
+    """Une conversation avec l'agent. La mémoire chargée au départ est dans le premier message."""
+
+    __tablename__ = "agent_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    niche_id: Mapped[int] = mapped_column(ForeignKey("niches.id", ondelete="CASCADE"), index=True)
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class AgentAction(Base):
+    """Journal : une ligne par outil appelé, par tour de conversation et par routine."""
+
+    __tablename__ = "agent_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="SET NULL"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    input: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[ActionStatus] = mapped_column(
+        _enum(ActionStatus, "action_status"), default=ActionStatus.RUNNING
+    )
+    summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        # Les valeurs NULL restent distinctes : seuls les rappels de stats sont uniques.
+        UniqueConstraint("kind", "script_id", "horizon_h", name="uq_notifications_reminder"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    niche_id: Mapped[int | None] = mapped_column(ForeignKey("niches.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text, default="")
+    script_id: Mapped[int | None] = mapped_column(ForeignKey("scripts.id", ondelete="CASCADE"))
+    horizon_h: Mapped[int | None] = mapped_column(Integer)
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class WeeklyReport(Base):
+    """Créé avant de commencer : une reprise ne repaie jamais le plan d'une même semaine."""
+
+    __tablename__ = "weekly_reports"
+    __table_args__ = (
+        UniqueConstraint("niche_id", "week_start", name="uq_weekly_reports_niche_id_week_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    niche_id: Mapped[int] = mapped_column(ForeignKey("niches.id", ondelete="CASCADE"), index=True)
+    week_start: Mapped[str] = mapped_column(String(10))  # Lundi de la semaine, heure locale.
+    learnings: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    markdown: Mapped[str] = mapped_column(Text, default="")
+    script_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    plan_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

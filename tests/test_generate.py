@@ -174,7 +174,7 @@ def test_transposition_needs_one_equivalent_per_beat_and_real_topics(
     adapt(db, video_id, niche.id, fake, n_variantes=1)
     schema = fake.calls[1]["schema"]
     beat = {"pain": "d", "belief": "", "proof": "p", "example": ""}
-    variant = {"angle": "a", "belief_attacked": "b", "topic_ids": []}
+    variant = {"core_idea": "c", "angle": "a", "belief_attacked": "b", "topic_ids": []}
 
     with pytest.raises(ValidationError, match="équivalent par beat"):
         schema.model_validate({"variants": [{**variant, "beats": [{"beat_index": 0, **beat}]}]})
@@ -696,7 +696,7 @@ def test_ideas_schema_refuses_unknown_topics(db: Session, niche) -> None:
     from app.generate.service import _ideas_schema
 
     schema = _ideas_schema(1, 1, {"t1"})
-    idea = {"angle": "a", "belief_attacked": "b", "why": "w", "potential": 5}
+    idea = {"core_idea": "c", "angle": "a", "belief_attacked": "b", "why": "w", "potential": 5}
 
     with pytest.raises(ValidationError, match="Sujet inconnu"):
         schema.model_validate({"ideas": [{"combination_index": 0, "topic_id": "x", **idea}]})

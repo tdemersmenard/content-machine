@@ -762,6 +762,7 @@ def test_idea_for_exploration_beats_better_ideas_when_a_slot_is_reserved(
                             {
                                 "combination_index": index,
                                 "topic_id": topics[index]["id"],
+                                "core_idea": f"c{index}",
                                 "angle": "a",
                                 "belief_attacked": "b",
                                 "why": "w",

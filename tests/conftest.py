@@ -1,6 +1,8 @@
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
 import pytest
 from alembic.config import Config
 from sqlalchemy.orm import Session
@@ -26,6 +28,14 @@ def alembic_config(url: str) -> Config:
     return config
 
 
+def distinct_vectors(texts: list[str]) -> np.ndarray:
+    """Seuls deux textes identiques se ressemblent : le filtre d'idées reste neutre par défaut."""
+    vectors = [
+        np.random.default_rng(zlib.crc32(text.encode())).standard_normal(512) for text in texts
+    ]
+    return np.array([item / np.linalg.norm(item) for item in vectors], dtype=np.float32)
+
+
 @pytest.fixture(autouse=True)
 def isolated_env(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -37,6 +47,8 @@ def isolated_env(
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("AGENT_SCHEDULER_ENABLED", "false")
+    monkeypatch.setattr("app.generate.novelty.embed_texts", distinct_vectors)
     clear_caches()
     yield
     get_engine().dispose()
