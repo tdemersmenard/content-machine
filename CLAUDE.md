@@ -221,7 +221,7 @@ Prérequis système : ffmpeg et ffprobe dans le PATH.
 
 À mettre à jour à la fin de chaque prompt.
 
-**Dernière mise à jour : 2026-11-06, dashboard.**
+**Dernière mise à jour : 2026-11-06, remplissage de la bibliothèque.**
 
 Fait :
 - Fondations : arborescence, configuration, modèles SQLAlchemy, migration `0001`, wrapper Claude
@@ -269,6 +269,8 @@ Fait :
   reformulation française du même pattern donne 0,727, une traduction anglaise 0,897, et la paire
   différente la plus proche 0,646. Claude filtre ensuite les faux positifs. À revoir sur de vraies
   données : le seuil n'a été mesuré que sur cet échantillon, et 0,727 est proche de la limite.
+- Fusion entre créateurs : sur 85 patterns tirés de 12 vidéos, un seul relie deux créateurs. Soit les
+  mécanismes sont vraiment différents, soit la fusion est trop stricte : à examiner avant d'ingérer plus.
 - `top_patterns` : tous les scores valent 0,5 tant que `learning` n'existe pas, le classement se
   fait donc sur le nombre d'exemples. Le score reste global, `niche_id` ne fait que filtrer.
 - `winning_combinations` n'a pas d'endpoint ni de commande, seulement la fonction. Elle pondère par
@@ -281,6 +283,11 @@ Validé en conditions réelles, sur une seule vidéo (TikTok français de 122 s,
   0,62 $, passe 2 0,62 $, patterns 0,19 $.
 - La fusion à 0,70 a soumis une paire à Claude (similarité 0,721), qui a refusé à raison : les deux
   fiches étaient bien différentes.
+
+Validé en conditions réelles sur 10 vidéos TikTok de tiers (167 500 à 5 M de vues, dont 2 retenues pour
+leur format seulement) : 14,68 $, de 5 à 10 minutes par vidéo, 85 patterns au total. Un manque de crédit API
+a arrêté 3 ingestions : la reprise a bien repris à l'étape interrompue. Les vues sont totales : le ratio à la
+médiane du compte n'est pas connu pour ces vidéos, les listes de comptes étant bloquées par TikTok.
 
 Validé en conditions réelles pour la génération, sur la vraie niche 1 :
 - `cm adapt 1 --niche 1 -n 1` : 1,34 $, 7 min 20. `cm ideas --niche 1 -n 5 --develop 1` : environ
@@ -328,8 +335,8 @@ Non vérifié en conditions réelles :
   jamais comparés à de vrais exports. `--map` permet de corriger.
 - Voix sur plusieurs vidéos : `voice_profile` ne repose que sur une vidéo de 34 s. Whisper `small` déforme
   le québécois (« t'amapporter », « n'abardones ») : un tic comme « tu vas te » peut être un artefact.
-- Thompson sampling sur de vraies données : tous les scores valent 0,5 et la bibliothèque compte
-  8 patterns tirés d'une seule vidéo, donc le tirage est encore presque aléatoire.
+- Thompson sampling sur de vraies données : tous les scores valent 0,5 tant qu'aucune vidéo publiée n'a
+  de stats, donc le tirage parmi les 85 patterns reste presque aléatoire.
 - Le critique et l'auteur sont le même modèle : sa note n'est pas une mesure indépendante.
 - Vidéos avec montage, texte à l'écran ou cuts : la seule vidéo testée n'en a aucun. Ce n'est pas
   prioritaire : le créateur de référence (keo_fdb) et le format visé sont sans montage.
@@ -337,7 +344,6 @@ Non vérifié en conditions réelles :
 - Valeur de la passe 2 : elle n'a rien corrigé ni retiré sur cette vidéo, le contrôle par le code non
   plus. Elle coûte autant que la passe 1 car elle réécrit toute l'analyse. À réévaluer sur plus de
   vidéos, par exemple en ne lui faisant renvoyer que les changements.
-- Fusion réellement acceptée par Claude entre deux vidéos : pas encore observée.
 
 Pas encore fait :
 - Stats d'une vidéo sans script : `Performance` passe par un script, donc les vidéos déjà publiées par le
